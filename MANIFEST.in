@@ -2,4 +2,4 @@ graft visiofirm/static
 graft visiofirm/templates
 include LICENSE
 include README.md
-include reqs.txt
+include requirements.txt
