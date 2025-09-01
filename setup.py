@@ -15,7 +15,23 @@ setup(
     packages=find_packages(),
     py_modules=['run'],
     include_package_data=True,
-    install_requires=[line.strip() for line in open('requirements.txt') if line.strip() and not line.startswith('#')],
+    install_requires=[
+        'filelock==3.19.1',
+        'Flask==3.1.2',
+        'Flask_Login==0.6.3',
+        'networkx==3.4.2',
+        'openai_clip==1.0.1',
+        'opencv_python==4.12.0.88',
+        'Pillow==11.3.0',
+        'psutil==7.0.0',
+        'PyYAML==6.0.2',
+        'rapidfuzz==3.13.0',
+        'rarfile==4.2',
+        'torch==2.8.0',
+        'transformers==4.55.4',
+        'ultralytics==8.3.185',
+        'Werkzeug==3.1.3',
+    ],
     entry_points={
         'console_scripts': [
             'visiofirm = run:main',  
@@ -23,7 +39,7 @@ setup(
     },
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: Apache 2.0 License', 
+        'License :: OSI Approved :: Apache Software License', 
         'Operating System :: OS Independent',
     ],
     python_requires='>=3.10',
