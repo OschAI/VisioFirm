@@ -28,3 +28,7 @@ jobs:
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
+
+    - name: Clean environment
+      run: |
+        rm -rf dist/ build/ *.egg-info/
