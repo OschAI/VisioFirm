@@ -113,7 +113,16 @@ Built by [Safouane El Ghazouali](https://github.com/safouaneelg) for the researc
 
 ## Citation
 
-A paper will come soon, stay tuned.
+```
+@misc{ghazouali2025visiofirm,
+    title={VisioFirm: Cross-Platform AI-assisted Annotation Tool for Computer Vision},
+    author={Safouane El Ghazouali and Umberto Michelucci},
+    year={2025},
+    eprint={2509.04180},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV}
+}
+```
 
 ## TODOs
 
