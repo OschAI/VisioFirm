@@ -1,6 +1,52 @@
-{% extends "labeler_base.html" %}
+{% extends "base.html" %}
 {% block title %}{{ project_name }} - Annotation{% endblock %}
 {% block content %}
+<script>
+    // Show spinner immediately
+    const spinnerStyles = `
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .vf-loader {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    `;
+    const styleElement = document.createElement('style');
+    styleElement.textContent = spinnerStyles;
+    document.head.appendChild(styleElement);
+    const loadingOverlay = document.createElement('div');
+    loadingOverlay.id = 'loading-overlay';
+    loadingOverlay.className = 'loading-overlay';
+    loadingOverlay.innerHTML = `
+        <div class="vf-loader" id="vf-loader">
+            <!-- Your spinner content here (dots, rings, etc.) -->
+            <div class="dot dot-1"></div>
+            <div class="dot dot-2"></div>
+            <div class="dot dot-3"></div>
+            <div class="dot dot-4"></div>
+            <div class="dot dot-5"></div>
+            <div class="dot dot-6"></div>
+            <div class="dot dot-7"></div>
+            <div class="dot dot-8"></div>
+            <p style="color: white; margin-top: 20px;">Loading Project...</p>
+        </div>
+    `;
+    document.body.appendChild(loadingOverlay);
+</script>
 <style>
     .avatar {
         width: 30px;
@@ -76,6 +122,206 @@
         font-size: 0.9em;
         margin-top: 5px;
     }
+    #export-warning {
+        color: #ff9800;
+        font-size: 0.875rem;
+        margin: 8px 0;
+        padding: 8px;
+        background: rgba(255, 152, 0, 0.1);
+        border-radius: 4px;
+        border-left: 4px solid #ff9800;
+        flex: 1;
+        max-width: 70%;
+    }
+    .thumbnail-row[data-annotated="true"] {
+        background: rgba(76, 201, 240, 0.5); 
+    }
+
+    .thumbnail-row[data-annotated="false"][data-preannotated="true"] {
+        background: rgba(139, 69, 19, 0.5);
+    }
+
+    .thumbnail-row[data-annotated="false"][data-preannotated="false"] {
+        background: rgba(255, 166, 0, 0.5);
+    }
+    .dropdown {
+        position: relative;
+        display: inline-block;
+    }
+
+    .dropdown-content {
+        display: none;
+        position: absolute;
+        background-color: #f9f9f9;
+        min-width: 160px;
+        box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+        z-index: 1;
+        left: 0;
+        top: 100%;
+        border-radius: 4px;
+    }
+
+    .dropdown-content a {
+        color: black;
+        padding: 12px 16px;
+        text-decoration: none;
+        display: block;
+        border-bottom: 1px solid #eee;
+    }
+
+    .dropdown-content a:last-child {
+        border-bottom: none;
+    }
+
+    .dropdown-content a:hover {
+        background-color: #f1f1f1;
+    }
+    
+    /* Make labeling area scrollable */
+    .labeling-area {
+        min-height: 100vh-50px; /* Minimum height to fill viewport - the top bar from the base_labeler.html */
+        display: flex;
+        flex-direction: column; /* Stack children vertically */
+        overflow-y: auto; /* Allow scrolling if content overflows */
+        overflow-x: hidden; /* Prevent horizontal overflow */
+    }
+
+    .control-panel {
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    padding: 10px;
+    max-height: 30vh; /* Adjust to fit within labeling-area; prevents overflow */
+    width: 100%; /* Ensure it takes full available width */
+}
+
+/* Make class-selector scrollable and take 90% width */
+.class-selector {
+    width: 85%; /* 90% of control-panel width */
+    max-height: 30vh; /* Constrain height to fit viewport; adjust as needed */
+    overflow-y: auto; /* Enable vertical scrolling for tags */
+    overflow-x: hidden; /* Prevent horizontal overflow */
+    display: flex;
+    flex-direction: column;
+}
+
+#class-tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    height: calc(3 * 2em); /* ~2 rows tall */
+    overflow-y: auto;
+}
+
+.classes-left {
+    width: 70%;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap; 
+    gap: 5px;
+    max-height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    align-content: flex-start;
+}
+
+.classes-right {
+    width: 20%;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 100%;
+    overflow-y: auto;
+    background-color: #ddd;
+}
+
+.class-tag {
+    position: relative;
+    padding: 0px 5px 2px 2px;
+    margin: 4px 0;
+    border-radius: 4px;
+    color: black;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: default;
+    transition: opacity 0.2s ease;
+    min-width: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    max-height: 30px;
+}
+
+.class-tag.selected {
+    border: 2px solid black;
+}
+
+.approve-btn {
+    width: 80px; 
+    align-self: flex-start;
+    padding: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 4px;
+    background-color: #4cc9f0;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    text-align: center;
+}
+
+.approve-btn:hover {
+    background-color: #3aa8d0; /* Darker shade on hover */
+}
+
+    .class-tag:hover {
+        opacity: 0.9; /* Subtle hover effect */
+    }
+
+    .add-btn, .remove-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background-color: rgb(185, 185, 185);
+        color: rgb(0, 0, 0);
+        font-size: 14px;
+        cursor: pointer;
+        border: none;
+        margin-left: 6px; /* space between text and button */
+        flex-shrink: 0;
+        position: static; /* ❌ remove absolute positioning */
+        transform: none;  /* ❌ reset */
+    }
+
+
+    .add-btn:hover, .remove-btn:hover {
+        background-color: rgba(255, 255, 255, 0.4); /* Brighter on hover */
+    }
+
+    .classes-right .class-tag {
+        font-size: 1.1em; /* Slightly toned down from 1.2em for balance */
+        font-weight: 600; /* Bolder for selected */
+        padding: 8px 35px 8px 12px; /* Same padding for consistency */
+    }
+    
+    .class-search {
+        width: 5%; 
+        display: flex;
+        align-items: flex-start;
+    }
+
+    .class-search input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 0.875rem;
+    }
 </style>
     <!-- Grid View -->
     <div id="grid-view" class="view-container grid-view">
@@ -131,23 +377,30 @@
         <div class="grid-content">
             <div id="grid-thumbnails" class="grid-thumbnails">
                 {% for image in images %}
-                    <div class="grid-card" data-id="{{ image.split('/')[-1] }}" data-date="{{ '2023-01-01' }}" data-annotated="{% if image in annotated_images %}true{% else %}false{% endif %}" data-preannotated="{% if image in preannotated_images %}true{% else %}false{% endif %}">
+                    <div class="grid-card" 
+                        data-id="{{ image.filename }}" 
+                        data-image-id="{{ image.id }}" 
+                        data-date="2023-01-01" 
+                        data-annotated="{{ 'true' if image.annotated else 'false' }}" 
+                        data-preannotated="{{ 'true' if image.preannotated else 'false' }}">
                         <div class="card-checkbox">
-                            <input type="checkbox" class="image-checkbox" data-path="{{ image }}">
+                            <input type="checkbox" class="image-checkbox" data-path="{{ image.url }}">
                         </div>
                         <div class="card-image-container">
-                            <img data-src="{{ image }}" alt="Thumbnail" class="lazy-load">
-                            {% if image in annotated_images %}
+                            <img data-src="{{ image.url }}" alt="Thumbnail" class="lazy-load">
+                            {% if image.annotated %}
                                 <span class="annotated-check"><i class="fas fa-check"></i></span>
                             {% endif %}
                         </div>
                         <div class="card-info">
-                            <span class="image-id">{{ loop.index0 }}</span>
+                            <span class="image-id">{{ image.id }}</span>
                             <span class="image-date">{{ '2023-01-01' }}</span>
-                            <span class="image-status" data-annotated="{% if image in annotated_images %}true{% else %}false{% endif %}" data-preannotated="{% if image in preannotated_images %}true{% else %}false{% endif %}">
-                                {% if image in annotated_images %}
+                            <span class="image-status" 
+                                data-annotated="{{ 'true' if image.annotated else 'false' }}" 
+                                data-preannotated="{{ 'true' if image.preannotated else 'false' }}">
+                                {% if image.annotated %}
                                     Annotated
-                                {% elif image in preannotated_images %}
+                                {% elif image.preannotated %}
                                     Pre-Annotated
                                 {% else %}
                                     Not Annotated
@@ -171,29 +424,36 @@
             </thead>
             <tbody>
                 {% for image in images %}
-                    <tr data-id="{{ loop.index0 }}" data-date="{{ '2023-01-01' }}" data-annotated="{% if image in annotated_images %}true{% else %}false{% endif %}" data-preannotated="{% if image in preannotated_images %}true{% else %}false{% endif %}" data-annotator="{% if image_annotators.get(image) %}{{ image_annotators[image] }}{% else %}null{% endif %}">
+                    <tr data-id="{{ image.filename }}" 
+                        data-image-id="{{ image.id }}" 
+                        data-date="2023-01-01" 
+                        data-annotated="{{ 'true' if image.annotated else 'false' }}" 
+                        data-preannotated="{{ 'true' if image.preannotated else 'false' }}" 
+                        data-annotator="{% if image_annotators.get(image.url) %}{{ image_annotators[image.url] }}{% else %}null{% endif %}">
                         <td>
-                            <input type="checkbox" class="image-checkbox" data-path="{{ image }}">
+                            <input type="checkbox" class="image-checkbox" data-path="{{ image.url }}">
                         </td>
-                        <td>{{ loop.index0 }}</td>
+                        <td>{{ image.id }}</td>
                         <td class="thumbnail-cell">
                             <div class="list-thumbnail-container">
-                                <img data-src="{{ image }}" alt="Thumbnail" class="lazy-load">
+                                <img data-src="{{ image.url }}" alt="Thumbnail" class="lazy-load">
                             </div>
                         </td>
                         <td>{{ '2023-01-01' }}</td>
-                        <td class="image-status" data-annotated="{% if image in annotated_images %}true{% else %}false{% endif %}" data-preannotated="{% if image in preannotated_images %}true{% else %}false{% endif %}">
-                            {% if image in annotated_images %}
+                        <td class="image-status" 
+                            data-annotated="{{ 'true' if image.annotated else 'false' }}" 
+                            data-preannotated="{{ 'true' if image.preannotated else 'false' }}">
+                            {% if image.annotated %}
                                 Annotated
-                            {% elif image in preannotated_images %}
+                            {% elif image.preannotated %}
                                 Pre-Annotated
                             {% else %}
-                                Not Annotated
-                            {% endif %}
+                                    Not Annotated
+                                {% endif %}
                         </td>
                         <td class="annotator-cell">
-                            {% if image_annotators.get(image) %}
-                                <div class="avatar">{{ image_annotators[image] }}</div>
+                            {% if image_annotators.get(image.url) %}
+                                <div class="avatar">{{ image_annotators[image.url] }}</div>
                             {% else %}
                                 -
                             {% endif %}
@@ -207,7 +467,19 @@
     <div id="annotation-view" class="view-container annotation-container hide">
         <div class="images-list">
             <div class="images-header">
-                <h2>Images</h2>
+                <div class="dropdown">
+                    <button id="sort-btn-annotation" class="layout-btn" title="Rearrange List">
+                        <i class="fas fa-sort"></i> Sort
+                    </button>
+                    <div class="dropdown-content">
+                        <a href="#" data-sort="name-asc">Name (A-Z)</a>
+                        <a href="#" data-sort="name-desc">Name (Z-A)</a>
+                        <a href="#" data-sort="date-asc">Date (Oldest First)</a>
+                        <a href="#" data-sort="date-desc">Date (Newest First)</a>
+                        <a href="#" data-sort="status-asc">Completion (Annotated First)</a>
+                        <a href="#" data-sort="status-desc">Completion (Unannotated First)</a>
+                    </div>
+                </div>
                 <button id="viewport-btn-annotation" class="layout-btn" title="Switch to Grid View">
                     <i class="fas fa-th-large"></i> Grid View
                 </button>
@@ -216,10 +488,16 @@
                 <table class="thumbnail-table">
                     <tbody>
                         {% for image in images %}
-                            <tr class="thumbnail-row" data-index="{{ loop.index0 }}" data-id="{{ image.split('/')[-1] }}">
-                                <td class="thumbnail-id">{{ loop.index0 }}</td>
+                            <tr class="thumbnail-row" 
+                                data-index="{{ loop.index0 }}" 
+                                data-id="{{ image.filename }}" 
+                                data-image-id="{{ image.id }}" 
+                                data-date="2023-01-01" 
+                                data-annotated="{{ 'true' if image.annotated else 'false' }}" 
+                                data-preannotated="{{ 'true' if image.preannotated else 'false' }}">
+                                <td class="thumbnail-id">{{ image.id }}</td>
                                 <td class="thumbnail-image">
-                                    <img data-src="{{ image }}" alt="Thumbnail" class="lazy-load">
+                                    <img data-src="{{ image.url }}" alt="Thumbnail" class="lazy-load">
                                 </td>
                             </tr>
                         {% endfor %}
@@ -242,22 +520,25 @@
                         </div>
                     </div>
                     <div class="canvas-controls">
-                        <button class="control-btn" id="rect-mode" title="Draw Rectangle"><img src="{{ url_for('static', filename='img/logos/rect-mode.svg') }}" alt="Draw Rectangle"></button>
-                        <button class="control-btn" id="polygon-mode" title="Draw Polygon"><img src="{{ url_for('static', filename='img/logos/polygon-mode.svg') }}" alt="Draw Polygon"></button>
-                        <button class="control-btn" id="magic-mode" title="One Click Annotation"><img src="{{ url_for('static', filename='img/logos/magic-mode.svg') }}" alt="One Click Annotation"></button>
-                        <button class="control-btn" id="select-mode" title="Select Labels"><img src="{{ url_for('static', filename='img/logos/select-mode.svg') }}" alt="Select Labels"></button>
-                        <button class="control-btn" id="reset-view" title="Reset View"><img src="{{ url_for('static', filename='img/logos/reset-view.svg') }}" alt="Reset View"></button>
-                        <button class="control-btn" id="undo-btn" title="Undo Last Action"><img src="{{ url_for('static', filename='img/logos/undo-btn.svg') }}" alt="Undo Last Action"></button>
-                        <button class="control-btn" id="delete-btn" title="Delete Selected Annotation"><img src="{{ url_for('static', filename='img/logos/delete-btn.svg') }}" alt="Delete Selected Annotation"></button>
-                        <button class="control-btn" id="zoom-in-btn" title="Zoom In"><img src="{{ url_for('static', filename='img/logos/zoom-in-btn.svg') }}" alt="Zoom In"></button>
-                        <button class="control-btn" id="zoom-out-btn" title="Zoom Out"><img src="{{ url_for('static', filename='img/logos/zoom-out-btn.svg') }}" alt="Zoom Out"></button>
-                        <button class="control-btn" id="duplicate-btn" title="Duplicate Selected Annotation"><img src="{{ url_for('static', filename='img/logos/duplicate-btn.svg') }}" alt="Duplicate Selected Annotation"></button>
-                        <button class="control-btn" id="save-btn" title="Save Annotations"><img src="{{ url_for('static', filename='img/logos/save-btn.svg') }}" alt="Save Annotations"></button>
-                        <button class="control-btn" id="grid-btn" title="Toggle Grid"><img src="{{ url_for('static', filename='img/logos/grid-btn.svg') }}" alt="Toggle Grid"></button>
-                        <button class="control-btn" id="prev-image-btn" title="Previous Image"><img src="{{ url_for('static', filename='img/logos/prev-image-btn.svg') }}" alt="Previous Image"></button>
-                        <button class="control-btn" id="next-image-btn" title="Next Image"><img src="{{ url_for('static', filename='img/logos/next-image-btn.svg') }}" alt="Next Image"></button>
+                        {% if setup_type != 'Classification' %}
+                        <button class="control-btn" id="rect-mode" title="Draw Rectangle"><img src="/static/img/logos/rect-mode.svg" alt="Draw Rectangle"></button>
+                        <button class="control-btn" id="polygon-mode" title="Draw Polygon"><img src="/static/img/logos/polygon-mode.svg" alt="Draw Polygon"></button>
+                        <button class="control-btn" id="magic-mode" title="One Click Annotation"><img src="/static/img/logos/magic-mode.svg" alt="One Click Annotation"></button>
+                        <button class="control-btn" id="select-mode" title="Select Labels"><img src="/static/img/logos/select-mode.svg" alt="Select Labels"></button>
+                        <button class="control-btn" id="undo-btn" title="Undo Last Action"><img src="/static/img/logos/undo-btn.svg" alt="Undo Last Action"></button>
+                        <button class="control-btn" id="delete-btn" title="Delete Selected Annotation"><img src="/static/img/logos/delete-btn.svg" alt="Delete Selected Annotation"></button>
+                        <button class="control-btn" id="duplicate-btn" title="Duplicate Selected Annotation"><img src="/static/img/logos/duplicate-btn.svg" alt="Duplicate Selected Annotation"></button>
+                        <button class="control-btn" id="grid-btn" title="Toggle Grid"><img src="/static/img/logos/grid-btn.svg" alt="Toggle Grid"></button>
+                        {% endif %}
+                        <button class="control-btn" id="reset-view" title="Reset View"><img src="/static/img/logos/reset-view.svg" alt="Reset View"></button>
+                        <button class="control-btn" id="zoom-in-btn" title="Zoom In"><img src="/static/img/logos/zoom-in-btn.svg" alt="Zoom In"></button>
+                        <button class="control-btn" id="zoom-out-btn" title="Zoom Out"><img src="/static/img/logos/zoom-out-btn.svg" alt="Zoom Out"></button>
+                        <button class="control-btn" id="save-btn" title="Save Annotations"><img src="/static/img/logos/save-btn.svg" alt="Save Annotations"></button>
+                        <button class="control-btn" id="prev-image-btn" title="Previous Image"><img src="/static/img/logos/prev-image-btn.svg" alt="Previous Image"></button>
+                        <button class="control-btn" id="next-image-btn" title="Next Image"><img src="/static/img/logos/next-image-btn.svg" alt="Next Image"></button>
                     </div>
                 </div>
+                {% if setup_type != 'Classification' %}
                 <div class="ai-options">
                     <button id="hide-prediction-btn">Hide Pred.</button>
                     <div class="confidence-slider">
@@ -265,8 +546,12 @@
                         <input type="range" id="confidence-slider" min="0" max="1" step="0.01" value="0.4" style="-webkit-appearance: slider-vertical; writing-mode: bt-lr; width: 8px; height: 100%;">
                     </div>
                 </div>
+                {% endif %}
             </div>
             <div class="control-panel">
+                <div class="class-search">
+                    <input type="text" id="class-search-input" placeholder="Search classes...">
+                </div>
                 <div class="class-selector">
                     <div id="class-tags-container"></div>
                 </div>
@@ -363,46 +648,56 @@
                     <button class="tab-link active" data-tab="format-tab">Format</button>
                     <button class="tab-link" data-tab="split-tab">Split Configuration</button>
                 </div>
-               
+              
                 <!-- Format Selection Tab -->
                 <div id="format-tab" class="tab-content active">
                     <h2 class="modal-title">Export Annotations</h2>
                     <p class="modal-subtitle">Select an export format for your annotated images.</p>
                     <div class="format-options">
-                        {% if setup_type != "Oriented Bounding Box" %}
+                        {% if setup_type in ("Bounding Box", "Segmentation") %}
                         <div class="format-card" data-format="COCO">
-                            <img src="{{ url_for('static', filename='img/coco_logo.png') }}" alt="COCO Format">
+                            <img src="/static/img/coco_logo.png" alt="COCO Format">
                             <h3>COCO</h3>
                             <p>JSON file with images, ideal for object detection and segmentation.</p>
                         </div>
                         <div class="format-card" data-format="PASCAL_VOC">
-                            <img src="{{ url_for('static', filename='img/pascal_voc_logo.png') }}" alt="Pascal VOC Format">
+                            <img src="/static/img/pascal_voc_logo.png" alt="Pascal VOC Format">
                             <h3>Pascal VOC</h3>
                             <p>XML files with images, widely used for object detection.</p>
                         </div>
                         {% endif %}
+                        {% if setup_type == "Segmentation" %}
+                        <div class="format-card" data-format="MASK">
+                            <img src="/static/img/mask_logo.gif" alt="Pascal VOC Format">
+                            <h4>MASK PNG</h4>
+                            <p>PNG mask files with images, for semantic segmentation.</p>
+                        </div>
+                        {% endif %}
+                        {% if setup_type != 'Classification' %}
                         <div class="format-card" data-format="YOLO">
-                            <img src="{{ url_for('static', filename='img/yolo_logo.png') }}" alt="YOLO Format">
+                            <img src="/static/img/yolo_logo.png" alt="YOLO Format">
                             <h3>YOLO</h3>
                             <p>YAML and TXT files with images, optimized for YOLO models.</p>
                         </div>
+                        {% endif %}
                         <div class="format-card" data-format="CSV">
-                            <img src="{{ url_for('static', filename='img/csv_logo.png') }}" alt="CSV Format">
+                            <img src="/static/img/csv_logo.png" alt="CSV Format">
                             <h3>CSV</h3>
                             <p>Tabular data with images, great for custom analysis.</p>
                         </div>
                     </div>
-                    <div class="modal-footer">
+                    <div class="modal-footer" style="display: flex; align-items: center; justify-content: space-between;">
+                        <div id="export-warning" style="display: none;"></div>
                         <button class="cancel-btn" id="cancel-export">Cancel</button>
                         <button class="next-btn" id="next-export-button">Next</button>
                     </div>
                 </div>
-               
+              
                 <!-- Split Configuration Tab -->
                 <div id="split-tab" class="tab-content">
                     <h2 class="modal-title">Dataset Split Configuration</h2>
                     <p class="modal-subtitle">Configure how to split your dataset between train, test, and validation sets.</p>
-                   
+                  
                     <div class="split-options">
                         <div class="split-toggle">
                             <label class="switch">
@@ -411,7 +706,7 @@
                             </label>
                             <span>Enable Dataset Splitting</span>
                         </div>
-                       
+                      
                         <div class="split-selection">
                             <div class="split-choice">
                                 <input type="checkbox" id="train-split" name="split" value="train" checked disabled>
@@ -426,7 +721,7 @@
                                 <label for="val-split">Validation</label>
                             </div>
                         </div>
-                       
+                      
                         <div class="split-ratios">
                             <div class="ratio-control" data-split="train">
                                 <label for="train-ratio">Train:</label>
@@ -447,7 +742,7 @@
                                 <span>%</span>
                             </div>
                         </div>
-                       
+                      
                         <div class="ratio-summary">
                             <div class="ratio-total">
                                 <strong>Total:</strong>
@@ -474,7 +769,7 @@
                             </div>
                         </div>
                     </div>
-                   
+                  
                     <div class="modal-footer">
                         <button class="back-btn" id="back-export-button">Back</button>
                         <button class="export-btn" id="confirm-export" disabled>Export</button>
@@ -491,11 +786,16 @@
                 <div class="form-group">
                     <label>Annotation Mode</label>
                     <div class="mode-buttons">
+                        {% if setup_type == 'Classification' %}
+                        <button type="button" class="mode-btn active" data-mode="clip">CLIP Zero-shot Classification</button>
+                        {% else %}
                         <button type="button" class="mode-btn active" data-mode="zero-shot">Zero-shot Detection</button>
                         <button type="button" class="mode-btn" data-mode="custom-model">Ultralytics Model</button>
+                        {% endif %}
                     </div>
-                    <input type="hidden" id="mode" name="mode" value="zero-shot">
+                    <input type="hidden" id="mode" name="mode" value="{% if setup_type == 'Classification' %}clip{% else %}zero-shot{% endif %}">
                 </div>
+                {% if setup_type != 'Classification' %}
                 <div id="zero-shot-options" class="form-group">
                     <label>Grounding Dino Model</label>
                     <select id="dino-model">
@@ -503,6 +803,7 @@
                         <option value="base">Base</option>
                     </select>
                 </div>
+                {% endif %}
                 <div id="custom-model-path" class="form-group" style="display: none;">
                     <label>Model Path</label>
                     <input type="text" id="model-path-input" name="model_path" placeholder="Enter absolute path to .pt model">
@@ -541,7 +842,7 @@
     </div>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/setup.css') }}">
+    <link rel="stylesheet" href="/static/css/setup.css">
     <script id="app-config" type="application/json" data-current-user-avatar="{{ current_user_avatar }}">
         {
             "setupType": "{{ setup_type }}",

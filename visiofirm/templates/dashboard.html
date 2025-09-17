@@ -1,0 +1,986 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="dashboard">
+    <div class="header">
+        <h2>Projects</h2>
+        <button class="create-btn">Create New Project</button>
+    </div>
+    <div class="projects-grid">
+        {% for project in projects %}
+            <!-- <div class="project-card" data-project="{{ project.name }}" onclick="window.location.href='/annotation/{{ project.name }}'"> -->
+            <div class="project-card" data-project="{{ project.name }}">
+                <div class="project-images">
+                    {% if project.setup_type and 'Video' in project.setup_type %}
+                        {% if project.videos %}
+                            <video src="{{ project.videos[0] }}" autoplay loop muted playsinline style="width: 100%; height: 100%; object-fit: cover; object-position: center;"></video>
+                        {% endif %}
+                    {% else %}
+                        {% for img in project.images %}
+                            <img src="{{ img }}" alt="Project image">
+                        {% endfor %}
+                    {% endif %}                </div>
+                <div class="project-info">
+                    <span class="project-name">{{ project.name }}</span>
+                    <button class="menu-btn">⋮</button>
+                    <div class="menu-dropdown" style="display: none;">
+                        <button class="overview-btn" data-project="{{ project.name }}">Overview</button>
+                        <button class="import-btn" data-project="{{ project.name }}">Add Images</button>
+                        <button class="delete-btn" data-project="{{ project.name }}">Delete</button>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="modal">
+    <div class="modal-content">
+        <button class="close-btn">×</button>
+        <h2>Create New Project</h2>
+        <form id="project-form" enctype="multipart/form-data">
+            <div class="tab-headers">
+                <button type="button" class="tab-btn active" data-tab="settings">Project settings</button>
+                <button type="button" class="tab-btn" data-tab="setup">Setup configuration</button>
+                <button type="button" class="tab-btn" data-tab="import">Data import</button>
+                <button type="button" class="tab-btn disabled" data-tab="summary" id="summary-tab">Summary</button>
+            </div>
+            <div class="tab-content active" id="settings">
+                <div class="form-group">
+                    <label>Project Name *</label>
+                    <input type="text" id="project-name" name="project_name" value="#VisioFirm" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="description" name="description"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Class Names (separate with commas, dots, or semicolons)</label>
+                    <input type="text" id="class-names" name="class_names" placeholder="e.g., e.g., car, truck, person">
+                    <div class="class-suggestions">
+                        <input type="text" id="class-search" placeholder="Search COCO classes...">
+                        <div id="class-tags" class="class-tags"></div>
+                    </div>
+                </div>
+                <button type="button" class="next-btn" data-next-tab="setup">Next</button>
+            </div>
+            <div class="tab-content" id="setup">
+                <div class="form-group">
+                    <label>Setup *</label>
+                    <div class="setup-choice">
+                        <button type="button" class="setup-btn" data-type="Bounding Box">
+                            <img src="/static/img/bb_logo.gif" alt="Bounding Box" class="setup-gif">
+                            <span>Bounding Box</span>
+                        </button>
+                        <button type="button" class="setup-btn" data-type="Oriented Bounding Box">
+                            <img src="/static/img/obb_logo.gif" alt="Oriented Bounding Box" class="setup-gif">
+                            <span>Oriented Bounding Box</span>
+                        </button>
+                        <button type="button" class="setup-btn" data-type="Segmentation">
+                            <img src="/static/img/seg_logo.gif" alt="Segmentation" class="setup-gif">
+                            <span>Segmentation</span>
+                        </button>
+                        <button type="button" class="setup-btn" data-type="Classification">
+                           <img src="/static/img/classif_logo.gif" alt="Classification" class="setup-gif">
+                            <span>Classification</span>
+                        </button>
+                        <button type="button" class="setup-btn" data-type="Video Detection">
+                           <img src="/static/img/video_det_logo.gif" alt="Video Detection" class="setup-gif">
+                            <span>Video Detection</span>
+                        </button>
+                        <button type="button" class="setup-btn" data-type="Video Segmentation">
+                           <img src="/static/img/video_seg_logo.gif" alt="Video Segmentation" class="setup-gif">
+                            <span>Video Segmentation</span>
+                        </button>
+                    </div>
+                    <input type="hidden" id="setup-type" name="setup_type" required>
+                </div>
+                <button type="button" class="next-btn" data-next-tab="import">Next</button>
+            </div>
+            <div class="tab-content" id="import">
+                <div class="form-group">
+                    <label>Data Import *</label>
+                    <div class="drop-zone" id="drop-zone">
+                        <i class="fa-solid fa-file-arrow-down drop-icon"></i>
+                        <p>Drag and drop images/folders/archives here.</p>
+                        <p><strong>Accepted file formats:</strong></p>
+                        <p>Image: .webp, .jpg, .jpeg, .png, .avif</p>
+                        <p>Compressed file with images: .zip, .tar, .rar</p>
+                        <p>Folder of images</p>
+                        <p id="compress-message" class="compress-message" style="display: none;">Compressed file detected! It will be extracted on submission. If you have annotation they will be added after project creation.</p>
+                    </div>
+                    <input type="file" id="file-input" name="files" multiple 
+                        accept=".webp,.WEBP,.jpg,.JPG,.jpeg,.JPEG,.png,.PNG,.avif,.AVIF,.zip,.ZIP,.tar,.TAR,.rar,.RAR" 
+                        style="display: none;" webkitdirectory directory>
+                    <div id="file-list" class="file-list" style="display: none; max-height: 200px; overflow-y: auto; margin-top: 10px;"></div>
+                    <div id="loading-waiter" class="loading-waiter" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Processing images...</p>
+                    </div>
+                </div>
+                <div id="progress-container" style="margin-top: 10px;"></div>
+                <button type="button" class="next-btn" data-next-tab="summary">Next</button>
+            </div>
+            <div class="tab-content" id="summary">
+                <h3>Annotation Summary</h3>
+                <div id="annotation-summary"></div>
+                <div class="create-btn-container">
+                    <button type="submit" class="create-btn">Create Project</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal" id="import-modal">
+    <div class="modal-content">
+        <button class="close-btn import-close-btn">×</button>
+        <h2 class="modal-title">Import More Images</h2>
+        <form id="import-form" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="import-label">Import Images for <span id="import-project-name" class="project-name-highlight"></span></label>
+                <div class="drop-zone" id="import-drop-zone">
+                    <i class="fa-solid fa-file-arrow-down drop-icon"></i>
+                    <p>Drag and drop images/folders/archives here.</p>
+                    <p><strong>Accepted file formats:</strong></p>
+                    <p>Image: .webp, .jpg, .jpeg, .png, .avif</p>
+                    <p>Compressed file with images: .zip, .tar, .rar</p>
+                    <p>Folder of images</p>
+                    <p id="import-compress-message" class="compress-message" style="display: none;">Compressed file detected! It will be extracted on submission.</p>
+                </div>
+                <input type="file" id="import-file-input" name="files" multiple 
+                    accept=".webp,.WEBP,.jpg,.JPG,.jpeg,.JPEG,.png,.PNG,.avif,.AVIF,.zip,.ZIP,.tar,.TAR,.rar,.RAR" 
+                    style="display: none;" webkitdirectory directory>
+                <div id="import-file-list" class="file-list" style="display: none; max-height: 200px; overflow-y: auto; margin-top: 10px;"></div>
+                <div id="import-loading-waiter" class="loading-waiter" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing images...</p>
+                </div>
+            </div>
+            <div id="import-progress-container" style="margin-top: 10px;"></div>
+            <button type="submit" class="create-btn" disabled>Import Files</button>
+        </form>
+    </div>
+</div>
+
+<div class="modal" id="delete-confirm-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>⚠️ Confirm Deletion</h2>
+            <button class="close-btn" id="cancel-delete">×</button>
+        </div>
+        <div class="modal-body">
+            <p id="delete-message"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="next-btn" id="confirm-delete">Yes, Delete</button>
+            <button class="close-btn" id="cancel-delete-footer">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="overview-modal">
+    <div class="modal-content">
+        <button class="close-btn overview-close-btn">×</button>
+        <h2 class="modal-title">Project Overview: <span id="overview-project-name"></span></h2>
+        <div id="total-images">Total Images: <span id="total-images-count"></span></div>
+        <div id="overview-charts">
+            <div id="image-stats"></div>
+            <div id="class-distribution"></div>
+            <div id="annotations-per-image"></div>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="/static/css/setup.css">
+<!-- <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script> -->
+<script type="module" src="/static/js/jslib/plotly-2.35.2.min.js"></script>
+
+<!-- Rest of the <style> and <script> blocks remain unchanged; no url_for there -->
+<style>
+.progress-container {
+    margin-bottom: 10px;
+}
+.progress-bar {
+    width: 100%;
+    background-color: #f0f0f0;
+    border-radius: 5px;
+    overflow: hidden;
+}
+.progress {
+    height: 20px;
+    background-color: #4caf50;
+    width: 0%;
+    transition: width 0.3s;
+}
+.file-progress {
+    margin-top: 5px;
+    font-size: 14px;
+}
+.upload-success {
+    color: green;
+    font-weight: bold;
+    margin-top: 10px;
+}
+.create-btn:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+.loading-waiter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 10px;
+}
+.project-card {
+    cursor: pointer;
+}
+.spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+    margin-right: 10px;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+.create-btn-container {
+    position: relative;
+}
+
+#annotation-summary {
+    margin-bottom: 20px;
+}
+.summary-section {
+    margin-bottom: 15px;
+}
+.summary-section p {
+    margin: 5px 0;
+}
+.class-mapping {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+.class-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    flex: 1;
+    min-width: 200px;
+    transition: transform 0.2s;
+}
+.class-card:hover {
+    transform: translateY(-3px);
+}
+.class-card.match {
+    border-left: 4px solid #2ecc71;
+}
+.class-card.no-match {
+    border-left: 4px solid #e74c3c;
+}
+.class-card h5 {
+    margin: 0 0 10px;
+    font-size: 16px;
+    color: #333;
+}
+.class-card p {
+    margin: 5px 0;
+    font-size: 14px;
+}
+.class-card .status {
+    font-weight: bold;
+}
+.class-suggestions {
+    background-color: #3498db4b;
+    margin-top: 10px;
+}
+#class-search {
+    width: 50%;
+    background-color: #6cb0dd3b;
+    height: auto;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+.class-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.class-tag {
+    background: #f0f0f0;
+    padding: 6px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+.class-tag:hover {
+    background: #e0e0e0;
+}
+.class-tag.selected {
+    background: #3498db;
+    color: #fff;
+}
+.class-tag.selected:hover {
+    background: #2980b9;
+}
+#overview-modal .modal-content {
+    width: 80%;
+    max-width: 1000px;
+}
+#image-stats, #class-distribution, #annotations-per-image {
+    width: 100%;
+    height: 400px;
+}
+.tab-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+</style>
+
+<script type="module">
+    import { initDropZone, initImportModal, getStoredUploadId, clearStoredData } from '/static/js/importHandler.js';
+    import { showLoadingOverlay, hideLoadingOverlay } from '/static/js/spinnerLoader.js';
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const modal = document.querySelector('.modal');
+        const createBtn = document.querySelector('.header .create-btn');
+        const closeBtn = document.querySelector('.close-btn');
+        const projectForm = document.getElementById('project-form');
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const progressContainer = document.getElementById('progress-container');
+        const createProjectBtn = document.querySelector('#project-form .create-btn');
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        const setupBtns = document.querySelectorAll('.setup-btn');
+        const setupInput = document.getElementById('setup-type');
+        const nextBtns = document.querySelectorAll('.next-btn');
+        const importModalElement = document.getElementById('import-modal');
+        const importForm = document.getElementById('import-form');
+        const importProgressContainer = document.getElementById('import-progress-container');
+        const importSubmitBtn = importForm.querySelector('.create-btn');
+        const overviewModal = document.getElementById('overview-modal');
+        const overviewCloseBtn = document.querySelector('.overview-close-btn');
+        let currentImportProject = null;
+        let deleteProjectName = null;
+        let isDataImported = false;
+
+        let projectClasses = '';
+        const classNamesInput = document.getElementById('class-names');
+        const classSearch = document.getElementById('class-search');
+        const classTags = document.getElementById('class-tags');
+        const projectNameInput = document.getElementById('project-name');
+
+        // Disable "Data Import" tab initially
+        const importTabBtn = document.querySelector('.tab-btn[data-tab="import"]');
+        importTabBtn.disabled = true;
+        importTabBtn.classList.add('disabled');
+
+        // COCO classes
+        const cocoClasses = [
+            '__background__', 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+            'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
+            'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase',
+            'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+            'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich',
+            'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant',
+            'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
+            'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+        ];
+
+        // Initialize class tags
+        function renderClassTags(filter = '') {
+            classTags.innerHTML = '';
+            // Normalize current classes for comparison (trim and lowercase)
+            const currentClasses = classNamesInput.value
+                .split(/[,.;]\s*/)
+                .map(c => c.trim().toLowerCase())
+                .filter(c => c);
+            const filteredClasses = cocoClasses.filter(c => c.toLowerCase().includes(filter.toLowerCase()) && c !== '__background__');
+            filteredClasses.forEach(cls => {
+                const tag = document.createElement('span');
+                // Check if the class is in currentClasses (case-insensitive)
+                const isSelected = currentClasses.includes(cls.toLowerCase());
+                tag.className = `class-tag ${isSelected ? 'selected' : ''}`;
+                tag.textContent = cls;
+                tag.addEventListener('click', () => {
+                    let updatedClasses = classNamesInput.value
+                        .split(/[,.;]\s*/)
+                        .filter(c => c.trim());
+                    const clsLower = cls.toLowerCase();
+                    const index = updatedClasses.findIndex(c => c.trim().toLowerCase() === clsLower);
+                    if (index !== -1) {
+                        // Remove the class
+                        updatedClasses.splice(index, 1);
+                    } else {
+                        // Add the class
+                        updatedClasses.push(cls);
+                    }
+                    classNamesInput.value = updatedClasses.join(', ');
+                    projectClasses = classNamesInput.value;
+                    renderClassTags(classSearch.value); // Re-render with current filter
+                });
+                classTags.appendChild(tag);
+            });
+        }
+
+        // Search filter for class tags
+        classSearch.addEventListener('input', () => {
+            renderClassTags(classSearch.value);
+        });
+
+        // Update project classes on input
+        classNamesInput.addEventListener('input', () => {
+            projectClasses = classNamesInput.value;
+            renderClassTags(classSearch.value); // Update tags to reflect manual input
+        });
+
+        // Initial render of class tags
+        renderClassTags();
+
+        // Initialize drop zones
+        initDropZone(
+            dropZone,
+            fileInput,
+            document.getElementById('file-list'),
+            dropZone.querySelector('.drop-icon'),
+            document.getElementById('compress-message'),
+            progressContainer,
+            createProjectBtn,
+            false
+        );
+
+        const importModal = initImportModal(
+            importModalElement,
+            importForm,
+            document.getElementById('import-drop-zone'),
+            document.getElementById('import-file-input'),
+            document.getElementById('import-file-list'),
+            document.querySelector('.import-close-btn'),
+            document.getElementById('import-compress-message'),
+            importProgressContainer,
+            importSubmitBtn,
+            false
+        );
+
+        createBtn.addEventListener('click', async () => {
+            modal.style.display = 'flex';
+            createProjectBtn.disabled = false;
+            isDataImported = false;
+            document.getElementById('summary-tab').classList.add('disabled');
+            try {
+                const response = await fetch('/get_unique_project_name');
+                const result = await response.json();
+                if (result.success) {
+                    projectNameInput.value = result.project_name;
+                } else {
+                    console.error('Failed to fetch unique project name:', result.error);
+                    projectNameInput.value = '#VisioFirm';
+                }
+            } catch (error) {
+                console.error('Error fetching unique project name:', error);
+                projectNameInput.value = '#VisioFirm';
+            }
+        });
+
+        const deleteModal = document.getElementById('delete-confirm-modal');
+        const deleteMessage = document.getElementById('delete-message');
+        const confirmDeleteBtn = document.getElementById('confirm-delete');
+        const cancelDeleteBtns = [
+            document.getElementById('cancel-delete'),
+            document.getElementById('cancel-delete-footer')
+        ];
+
+        closeBtn.addEventListener('click', async () => {
+            modal.style.display = 'none';
+            projectForm.reset();
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            document.querySelector('.tab-btn[data-tab="settings"]').classList.add('active');
+            document.getElementById('settings').classList.add('active');
+            setupBtns.forEach(b => b.classList.remove('selected'));
+            setupInput.value = '';
+            progressContainer.innerHTML = '';
+            document.getElementById('file-list').style.display = 'none';
+            document.getElementById('file-list').innerHTML = '';
+            createProjectBtn.disabled = true;
+            isDataImported = false;
+            document.getElementById('summary-tab').classList.add('disabled');
+            clearStoredData();
+            await fetch('/cleanup_chunks', { method: 'POST' });
+        });
+
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (btn.disabled || btn.classList.contains('disabled')) {
+                    e.preventDefault();
+                    return;
+                }
+                tabBtns.forEach(b => b.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab).classList.add('active');
+            });
+        });
+
+        createVideoOptions();
+
+        setupBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                console.log('Setup button clicked:', btn.dataset.type);
+                setupBtns.forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                setupInput.value = btn.dataset.type;
+                console.log('setupInput.value set to:', setupInput.value);
+
+                // Enable "Data Import" tab
+                importTabBtn.disabled = false;
+                importTabBtn.classList.remove('disabled');
+                console.log('Import tab enabled');
+
+                // Video logic
+                const isVideo = setupInput.value.includes('Video');
+                console.log('Is video setup:', isVideo);
+                const dragText = document.querySelector('#drop-zone > p:nth-of-type(1)');
+                const acceptedTitle = document.querySelector('#drop-zone > p:nth-of-type(2)');
+                const formatsP = document.querySelector('#drop-zone > p:nth-of-type(3)');
+                const compressedP = document.querySelector('#drop-zone > p:nth-of-type(4)');
+                const folderP = document.querySelector('#drop-zone > p:nth-of-type(5)');
+                const videoOptions = document.getElementById('video_options');
+                const compressMsg = document.getElementById('compress-message');
+
+                if (isVideo) {
+                    if (dragText) dragText.textContent = 'Drag and drop videos/folders/archives here.';
+                    if (formatsP) formatsP.textContent = '.mp4, .avi, .mov, .mkv';
+                    if (compressedP) compressedP.textContent = 'Compressed file with videos: .zip, .tar, .rar';
+                    if (folderP) folderP.textContent = 'Folder of videos';
+                    if (compressMsg) compressMsg.textContent = 'Compressed file detected! It will be extracted on submission.';
+                    if (videoOptions) videoOptions.style.display = 'block';
+                    fileInput.accept = ".mp4,.MP4,.avi,.AVI,.mov,.MOV,.mkv,.MKV,.zip,.ZIP,.tar,.TAR,.rar,.RAR";
+                    console.log('Video mode activated - text, accept, and slider updated');
+                } else {
+                    if (dragText) dragText.textContent = 'Drag and drop images/folders/archives here.';
+                    if (formatsP) formatsP.textContent = 'Image: .webp, .jpg, .jpeg, .png, .avif';
+                    if (compressedP) compressedP.textContent = 'Compressed file with images: .zip, .tar, .rar';
+                    if (folderP) folderP.textContent = 'Folder of images';
+                    if (compressMsg) compressMsg.textContent = 'Compressed file detected! It will be extracted on submission. If you have annotation they will be added after project creation.';
+                    if (videoOptions) videoOptions.style.display = 'none';
+                    fileInput.accept = ".webp,.WEBP,.jpg,.JPG,.jpeg,.JPEG,.png,.PNG,.avif,.AVIF,.zip,.ZIP,.tar,.TAR,.rar,.RAR";
+                    console.log('Non-video mode - reset to default');
+                }
+            });
+        });
+
+        // Create video options if not exist
+        function createVideoOptions() {
+            console.log('Creating video options slider');
+            const videoOptions = document.createElement('div');
+            videoOptions.id = 'video_options';
+            videoOptions.style.display = 'none';
+            videoOptions.style.marginTop = '10px';
+            videoOptions.innerHTML = `
+                <label for="target_fps">Frames per second (1-30):</label>
+                <input type="range" id="target_fps" name="target_fps" min="1" max="30" value="5">
+                <span id="fps_value">5 FPS</span>
+            `;
+            const dropZone = document.getElementById('drop-zone');
+            dropZone.parentNode.insertBefore(videoOptions, dropZone.nextSibling);  // Insert after drop-zone for "below"
+
+            const fpsSlider = document.getElementById('target_fps');
+            const fpsValue = document.getElementById('fps_value');
+            if (fpsSlider) {
+                fpsSlider.addEventListener('input', function() {
+                    fpsValue.textContent = `${this.value} FPS`;
+                    console.log('FPS slider changed to:', this.value);
+                });
+            }
+            return videoOptions;
+        }
+
+        nextBtns.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const nextTab = btn.dataset.nextTab;
+                if (nextTab === 'setup') {
+                    const projectName = document.getElementById('project-name').value;
+                    if (!projectName) {
+                        alert('Project name is required');
+                        return;
+                    }
+                } else if (nextTab === 'import') {
+                    if (!setupInput.value) {
+                        alert('Please select a setup type');
+                        return;
+                    }
+                } else if (nextTab === 'summary') {
+                    const uploadId = getStoredUploadId();
+                    if (!uploadId) {
+                        alert('Please upload files first');
+                        return;
+                    }
+                    const classNames = document.getElementById('class-names').value;
+                    if (!classNames) {
+                        alert('Please enter class names');
+                        return;
+                    }
+                    const setupType = setupInput.value;
+                    if (setupType === 'Classification') {
+                        isDataImported = true;
+                        document.getElementById('summary-tab').classList.remove('disabled');
+                        displaySummary({});
+                        tabBtns.forEach(b => b.classList.remove('active'));
+                        tabContents.forEach(c => c.classList.remove('active'));
+                        document.querySelector('.tab-btn[data-tab="summary"]').classList.add('active');
+                        document.getElementById('summary').classList.add('active');
+                    } else {
+                        try {
+                            document.getElementById('loading-waiter').style.display = 'flex';
+                            const response = await fetch('/parse_annotations', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                body: new URLSearchParams({
+                                    upload_id: uploadId,
+                                    class_names: classNames
+                                })
+                            });
+                            const result = await response.json();
+                            document.getElementById('loading-waiter').style.display = 'none';
+                            if (result.success) {
+                                isDataImported = true;
+                                document.getElementById('summary-tab').classList.remove('disabled');
+                                displaySummary(result.summary);
+                                tabBtns.forEach(b => b.classList.remove('active'));
+                                tabContents.forEach(c => c.classList.remove('active'));
+                                document.querySelector('.tab-btn[data-tab="summary"]').classList.add('active');
+                                document.getElementById('summary').classList.add('active');
+                            } else {
+                                alert(result.error);
+                            }
+                        } catch (error) {
+                            console.error('Error parsing annotations:', error);
+                            document.getElementById('loading-waiter').style.display = 'none';
+                            alert('Failed to parse annotations');
+                        }
+                    }
+                    return;
+                }
+                tabBtns.forEach(b => b.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+                document.querySelector(`.tab-btn[data-tab="${nextTab}"]`).classList.add('active');
+                document.getElementById(nextTab).classList.add('active');
+            });
+        });
+
+        function displaySummary(summary) {
+            const summaryDiv = document.getElementById('annotation-summary');
+            summaryDiv.innerHTML = '';
+            if (!summary || Object.keys(summary).length === 0) {
+                summaryDiv.innerHTML = '<p>No annotation summary available for this project type.</p>';
+                return;
+            }
+            const filesSection = document.createElement('div');
+            filesSection.className = 'summary-section';
+            if (summary.coco_files.length > 0) {
+                filesSection.innerHTML += `<p><strong>COCO Annotations:</strong> ${summary.coco_files.join(', ')}</p>`;
+            }
+            if (summary.yolo_files.length > 0) {
+                filesSection.innerHTML += `<p><strong>YOLO Annotations:</strong> ${summary.yolo_files.join(', ')}</p>`;
+            }
+            filesSection.innerHTML += `<p><strong>Annotated Images:</strong> ${summary.annotated_images}</p>`;
+            summaryDiv.appendChild(filesSection);
+
+            const mappingSection = document.createElement('div');
+            mappingSection.className = 'summary-section';
+            mappingSection.innerHTML = '<h4>Class Mapping</h4>';
+            const mappingContainer = document.createElement('div');
+            mappingContainer.className = 'class-mapping';
+            for (const [annoClass, projectClass] of Object.entries(summary.class_mapping)) {
+                const card = document.createElement('div');
+                card.className = `class-card ${projectClass ? 'match' : 'no-match'}`;
+                card.innerHTML = `
+                    <h5>${annoClass}</h5>
+                    <p>Mapped to: <span class="status">${projectClass || 'No match'}</span></p>
+                `;
+                mappingContainer.appendChild(card);
+            }
+            mappingSection.appendChild(mappingContainer);
+            summaryDiv.appendChild(mappingSection);
+        }
+
+        projectForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!setupInput.value) {
+                alert('Please select a setup type');
+                return;
+            }
+            const uploadId = getStoredUploadId();
+            if (!uploadId) {
+                alert('Please import at least one image to create a project');
+                return;
+            }
+        
+            try {
+                createProjectBtn.style.display = 'none';
+                showLoadingOverlay('Creating project...');
+                
+                const formData = new FormData();
+                formData.append('project_name', document.getElementById('project-name').value);
+                formData.append('description', document.getElementById('description').value);
+                formData.append('setup_type', setupInput.value);
+                formData.append('class_names', document.getElementById('class-names').value);
+                formData.append('upload_id', uploadId);
+        
+                const response = await fetch('/create_project', {
+                    method: 'POST',
+                    body: formData
+                });
+        
+                const responseText = await response.text();
+                try {
+                    const result = JSON.parse(responseText);
+                    if (result.success) {
+                        progressContainer.innerHTML = '<p>Project created!</p>';
+                        setTimeout(() => {
+                            modal.style.display = 'none';
+                            location.reload();
+                        }, 1000);
+                    } else {
+                        alert(result.error || 'Failed to create project');
+                        progressContainer.innerHTML = '';
+                        document.getElementById('file-list').style.display = 'none';
+                        document.getElementById('file-list').innerHTML = '';
+                        createProjectBtn.disabled = true;
+                    }
+                } catch (jsonError) {
+                    console.error('JSON Parse Error:', jsonError);
+                    alert('Server returned invalid JSON response');
+                }
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                alert(`Project creation failed: ${error.message}`);
+                progressContainer.innerHTML = '';
+                document.getElementById('file-list').style.display = 'none';
+                document.getElementById('file-list').innerHTML = '';
+                createProjectBtn.disabled = true;
+            } finally {
+                createProjectBtn.style.display = 'block';
+                hideLoadingOverlay();
+                clearStoredData();
+            }
+        });    
+
+        document.querySelectorAll('.import-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                currentImportProject = btn.dataset.project;
+                document.getElementById('import-project-name').textContent = currentImportProject;
+                importModalElement.style.display = 'flex';
+                importModal.reset();
+                importSubmitBtn.disabled = true;
+            });
+        });
+
+        importForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentImportProject) {
+                alert('No project selected');
+                return;
+            }
+            const uploadId = importModal.getStoredUploadId();
+            if (!uploadId) {
+                alert('Please select at least one image to import');
+                return;
+            }
+
+            try {
+                document.getElementById('import-loading-waiter').style.display = 'flex';
+                const formData = new FormData();
+                formData.append('project_name', currentImportProject);
+                formData.append('upload_id', uploadId);
+
+                const response = await fetch('/import_images', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                document.getElementById('import-loading-waiter').style.display = 'none';
+                if (result.success) {
+                    importProgressContainer.innerHTML = '<p>Upload complete!</p>';
+                    setTimeout(() => {
+                        importModalElement.style.display = 'none';
+                        location.reload();
+                    }, 1000);
+                } else {
+                    alert(result.error || 'Failed to import images');
+                    importProgressContainer.innerHTML = '';
+                    document.getElementById('import-file-list').innerHTML = '';
+                    document.getElementById('import-file-list').style.display = 'none';
+                    document.getElementById('import-drop-zone').querySelector('.drop-icon').classList.remove('loaded');
+                    document.getElementById('import-compress-message').style.display = 'none';
+                    importSubmitBtn.disabled = true;
+                }
+            } catch (error) {
+                console.error('Import error:', error);
+                document.getElementById('import-loading-waiter').style.display = 'none';
+                alert('Failed to import images: ' + error.message);
+                importProgressContainer.innerHTML = '';
+                document.getElementById('import-file-list').innerHTML = '';
+                document.getElementById('import-file-list').style.display = 'none';
+                document.getElementById('import-drop-zone').querySelector('.drop-icon').classList.remove('loaded');
+                document.getElementById('import-compress-message').style.display = 'none';
+                importSubmitBtn.disabled = true;
+            }
+        });
+
+        document.querySelectorAll('.menu-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const dropdown = btn.nextElementSibling;
+                dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+            });
+        });
+
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const card = btn.closest('.project-card');
+                const projectName = btn.dataset.project;
+                const imageCount = card.querySelectorAll('.project-images img').length;
+
+                deleteProjectName = projectName;
+                deleteMessage.textContent = `Are you sure you want to delete project "${projectName}" ?`;
+                deleteModal.style.display = 'block';
+            });
+        });
+
+        document.querySelectorAll('.overview-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const projectName = btn.dataset.project;
+                document.getElementById('overview-project-name').textContent = projectName;
+                overviewModal.style.display = 'flex';
+
+                try {
+                    const response = await fetch(`/get_project_overview/${projectName}`);
+                    const data = await response.json();
+                    if (data.error) {
+                        alert(data.error);
+                        return;
+                    }
+
+                    document.getElementById('total-images-count').textContent = data.total_images;
+
+                    if (data.total_images === 0) {
+                        document.getElementById('image-stats').innerHTML = '<p>No images in this project.</p>';
+                    } else {
+                        var pieData = [{
+                            values: [data.annotated_images, data.non_annotated_images],
+                            labels: ['Annotated', 'Non-annotated'],
+                            type: 'pie'
+                        }];
+                        var pieLayout = { title: 'Image Annotation Status' };
+                        Plotly.newPlot('image-stats', pieData, pieLayout);
+                    }
+
+                    if (Object.keys(data.class_distribution).length === 0) {
+                        document.getElementById('class-distribution').innerHTML = '<p>No annotations in this project.</p>';
+                    } else {
+                        var barData = [{
+                            x: Object.keys(data.class_distribution),
+                            y: Object.values(data.class_distribution),
+                            type: 'bar'
+                        }];
+                        var barLayout = {
+                            title: 'Class Distribution',
+                            xaxis: { title: 'Classes' },
+                            yaxis: { title: 'Number of Annotations' }
+                        };
+                        Plotly.newPlot('class-distribution', barData, barLayout);
+                    }
+
+                    if (data.annotations_per_image.length === 0) {
+                        document.getElementById('annotations-per-image').innerHTML = '<p>No annotations in this project.</p>';
+                    } else {
+                        var histData = [{
+                            x: data.annotations_per_image,
+                            type: 'histogram'
+                        }];
+                        var histLayout = {
+                            title: 'Annotations per Image',
+                            xaxis: { title: 'Number of Annotations' },
+                            yaxis: { title: 'Number of Images' }
+                        };
+                        Plotly.newPlot('annotations-per-image', histData, histLayout);
+                    }
+                } catch (error) {
+                    console.error('Error fetching overview data:', error);
+                    alert('Failed to load project overview');
+                }
+            });
+        });
+
+        document.querySelectorAll('.project-card').forEach(card => {
+            card.addEventListener('click', async (e) => {
+                if (e.target.closest('.menu-btn, .menu-dropdown, .overview-btn, .import-btn, .delete-btn')) {
+                    return;
+                }
+                const projectName = card.dataset.project;
+                showLoadingOverlay(`Loading ${projectName}...`);
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    window.open(`/annotation/${projectName}`, '_blank');
+                    // Hide the overlay after 2 seconds
+                    setTimeout(hideLoadingOverlay, 2000);
+                } catch (error) {
+                    hideLoadingOverlay();
+                    console.error('Navigation error:', error);
+                }
+            });
+        });
+
+        // Add this cleanup on page load
+        hideLoadingOverlay();
+
+        overviewCloseBtn.addEventListener('click', () => {
+            overviewModal.style.display = 'none';
+        });
+
+        document.addEventListener('click', (e) => {
+            document.querySelectorAll('.menu-dropdown').forEach(dropdown => {
+                if (!dropdown.contains(e.target) && !e.target.classList.contains('menu-btn')) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        });
+
+        confirmDeleteBtn.addEventListener('click', async () => {
+            if (!deleteProjectName) return;
+            const response = await fetch(`/delete_project/${deleteProjectName}`, { method: 'POST' });
+            const result = await response.json();
+            if (result.success) {
+                location.reload();
+            } else {
+                alert(result.error);
+            }
+        });
+
+        cancelDeleteBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                deleteModal.style.display = 'none';
+                deleteProjectName = null;
+            });
+        });
+    });
+</script>
+{% endblock %}

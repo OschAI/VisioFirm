@@ -4,9 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{% endblock %} - VisioFirm</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --primary-color: #3498db;
+            --text-color: #333;
+            --card-bg: #fff;
+            --shadow: 0 2px 4px rgba(0,0,0,0.1);
+            --transition: all 0.3s ease;
+        }
         html, body {
             height: 100vh;
             margin: 0;
@@ -28,9 +36,10 @@
             box-shadow: var(--shadow);
             display: flex;
             align-items: center;
-            height: 64px;
+            height: 60px;
             position: relative;
             z-index: 100;
+            flex-shrink: 0;
         }
         
         .top-bar img {
@@ -39,12 +48,15 @@
         }
 
         main {
-            flex: 1;
+            flex: 1 1 auto;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
             position: relative;
+            min-height: 0; 
+            width: 100%;
         }
+
         .top-bar h1 a {
             color: var(--primary-color);
             text-decoration: none;
@@ -213,23 +225,19 @@
     </style>
 </head>
 <body>
-    <!-- Flash messages -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="flash-modal {{ category }}">
-                    <p>{{ message }}</p>
-                </div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
+    <!-- Flash messages: Adapted for query params -->
+    {% if request.query_params.get('flash') %}
+        <div class="flash-modal {{ request.query_params.get('flash') }}">
+            <p>{{ request.query_params.get('message') }}</p>
+        </div>
+    {% endif %}
     <header>
         <nav class="top-bar">
             <div class="menu-icon">
                 <i class="fa-solid fa-bars"></i>
             </div>
             <h1>
-                <img src="{{ url_for('static', filename='img/VisioFirm_logo.png') }}" alt="VisioFirm Logo">
+                <img src="/static/img/VisioFirm_logo.png" alt="VisioFirm Logo">
                 <a href="/">VisioFirm</a>
             </h1>
             <div class="nav-links">
@@ -238,19 +246,19 @@
         </nav>
         <div class="sidebar">
             <div class="sidebar-header">
-                {% if current_user.is_authenticated %}
-                    <span>{{ current_user.username }}</span>
+                {% if user %}
+                    <span>{{ user.username }}</span>
                 {% else %}
                     <span>Guest</span>
                 {% endif %}
             </div>
             <div class="sidebar-menu">
-                {% if current_user.is_authenticated %}
-                    <a href="/profile" class="profile"><i class="fa-solid fa-user"></i> Profile</a>
-                    <a href="/logout" class="logout"><i class="fa-solid fa-sign-out-alt"></i> Logout</a>
+                {% if user %}
+                    <a href="/auth/profile" class="profile"><i class="fa-solid fa-user"></i> Profile</a>
+                    <a href="/auth/logout" class="logout"><i class="fa-solid fa-sign-out-alt"></i> Logout</a>
                 {% else %}
-                    <a href="/login"><i class="fa-solid fa-sign-in-alt"></i> Sign In</a>
-                    <a href="/register"><i class="fa-solid fa-user-plus"></i> Sign Up</a>
+                    <a href="/auth/login"><i class="fa-solid fa-sign-in-alt"></i> Sign In</a>
+                    <a href="/auth/register"><i class="fa-solid fa-user-plus"></i> Sign Up</a>
                 {% endif %}
             </div>
         </div>
@@ -286,5 +294,4 @@
         });
     </script>
 </body>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </html>
