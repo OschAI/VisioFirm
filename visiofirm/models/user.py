@@ -1,8 +1,9 @@
 import sqlite3
-from werkzeug.security import generate_password_hash, check_password_hash
-from flask_login import UserMixin
+from passlib.context import CryptContext
 from visiofirm.config import get_cache_folder
 import os
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_db_path():
     return os.path.join(get_cache_folder(), 'users.db')
@@ -28,7 +29,7 @@ def create_user(first_name, last_name, username, email, password, company):
     db_path = get_db_path()
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
-        password_hash = generate_password_hash(password)
+        password_hash = pwd_context.hash(password)
         try:
             cursor.execute('''
                 INSERT INTO users (first_name, last_name, username, email, password_hash, company)
@@ -44,6 +45,9 @@ def update_user(user_id, updates):
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         try:
+            # Handle password_hash specially if provided as plain text
+            if 'password_hash' in updates and 'password' in updates:
+                updates['password_hash'] = pwd_context.hash(updates.pop('password'))
             set_clause = ', '.join(f"{key} = ?" for key in updates)
             values = list(updates.values()) + [user_id]
             cursor.execute(f'''
@@ -86,7 +90,7 @@ def get_user_by_id(user_id):
         ''', (user_id,))
         return cursor.fetchone()
 
-class User(UserMixin):
+class User:
     def __init__(self, user_id, username, first_name, last_name, email, company):
         self.id = user_id
         self.username = username
