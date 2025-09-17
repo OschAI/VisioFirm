@@ -188,17 +188,17 @@
 
 .canvas-controls {
     position: absolute;
-    right: 8px; /* Close to the right border; adjust as needed */
-    top: 50%; /* Center vertically */
-    transform: translateY(-50%); /* Adjust to truly center the controls */
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
     display: flex;
-    flex-direction: column; /* Stack buttons vertically */
-    gap: 8px; /* Space between buttons */
-    background: rgba(255, 255, 255, 0.9); /* Optional: semi-transparent background */
-    padding: 8px; /* Optional: padding for aesthetics */
-    border-radius: 8px; /* Optional: rounded corners */
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Optional: subtle shadow */
-    z-index: 10; /* Ensure it’s above the canvas */
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 8px; 
+    border-radius: 8px; 
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    z-index: 10;
 }
 
 .control-btn {
@@ -358,6 +358,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 16px;
+    width: 100%;
 }
 
 .grid-card {
@@ -410,13 +411,17 @@
 .card-image-container {
     position: relative;
     overflow: hidden;
+    width: 100%;
+    padding-top: 100%; 
 }
 
 .card-image-container img {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
-    height: 20vh;
+    height: 100%;
     object-fit: cover;
-    transition: transform 0.3s ease;
 }
 
 .grid-card:hover .card-image-container img {

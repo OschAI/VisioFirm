@@ -1073,50 +1073,6 @@
             100% { background-position: 0 0; }
         }
 
-        .control-panel {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            width: 100%;
-            margin-top: -10px;
-            background-color: #7777779c;
-            padding: 10px;
-            border-radius: 5px;
-        }
-
-        .class-selector {
-            flex: 1;
-            min-width: 0;
-            overflow-y: auto;
-        }
-
-        #class-tags-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            width: 100%;
-        }
-
-        .class-tag {
-            display: block;
-            padding: 4px 4px;
-            font-size: 0.6rem;
-            border-radius: 4px;
-            cursor: pointer;
-            color: auto;
-            font-weight: 500;
-            user-select: none;
-            transition: transform 0.2s;
-            box-sizing: border-box;
-        }
-
-        .class-tag:hover {
-            transform: scale(1.05);
-        }
-
-        .class-tag.selected {
-            border: 3px solid rgb(0, 0, 0);
-        }
 
         @keyframes highlight-pulse {
             0% {
