@@ -34,6 +34,7 @@ def create_app():
         static_dir = os.path.join(module_dir, "static")
         
         templates = Jinja2Templates(directory=templates_dir)
+        app_instance.state.templates = templates  # Make templates available via app state
         app_instance.mount("/static", StaticFiles(directory=static_dir), name="static")
         
         # Config
