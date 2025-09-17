@@ -1,115 +1,135 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from flask_login import login_user, logout_user, login_required, current_user
+from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
+from fastapi.responses import RedirectResponse, HTMLResponse, Response
+from fastapi.templating import Jinja2Templates
 from visiofirm.models.user import create_user, get_user_by_username, get_user_by_email, update_user, User
-from werkzeug.security import check_password_hash, generate_password_hash
+from visiofirm.security import verify_password, create_access_token, get_current_user_from_cookie
+from datetime import timedelta
+from typing import Optional
+import os
 
-bp = Blueprint('auth', __name__)
+router = APIRouter(prefix="/auth")
+templates = Jinja2Templates(directory="visiofirm/templates")  # Updated path
 
-@bp.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        identifier = request.form['identifier']
-        password = request.form['password']
-        user_data = get_user_by_username(identifier) or get_user_by_email(identifier)
-        if user_data and check_password_hash(user_data[2], password):
-            user = User(user_data[0], user_data[1], user_data[3], user_data[4], user_data[5], user_data[6])
-            login_user(user)
-            flash('Login successful!', 'success')
-            return redirect(url_for('dashboard.index'))
-        else:
-            flash('Invalid username/email or password', 'error')
-    return render_template('login.html')
+@router.get("/login", response_class=HTMLResponse, name="auth.login")
+async def login_get(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
-@bp.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        first_name = request.form['first_name']
-        last_name = request.form['last_name']
-        username = request.form['username']
-        email = request.form['email']
-        password = request.form['password']
-        company = request.form['company']
-        if not all([first_name, last_name, username, email, password]):
-            flash('All required fields must be filled', 'error')
-        elif create_user(first_name, last_name, username, email, password, company):
-            flash('Registration successful. Please log in.', 'success')
-            return redirect(url_for('auth.login'))
-        else:
-            flash('Username or email already exists', 'error')
-    return render_template('register.html')
+@router.post("/login", name="auth.login_post")
+async def login_post(
+    response: Response,
+    identifier: str = Form(...),
+    password: str = Form(...)
+):
+    user_data = get_user_by_username(identifier) or get_user_by_email(identifier)
+    if not user_data or not verify_password(password, user_data[2]):
+        # For error, redirect with message
+        return RedirectResponse(url="/auth/login?flash=error&message=Invalid username/email or password", status_code=303)
+    
+    access_token_expires = None
+    access_token = create_access_token(
+        data={"sub": str(user_data[0])}, expires_delta=access_token_expires
+    )
+    response = RedirectResponse(url="/?flash=success&message=Login successful!", status_code=303)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True
+    )
+    return response
 
-@bp.route('/profile', methods=['GET', 'POST'])
-@login_required
-def profile():
-    if request.method == 'POST':
-        first_name = request.form.get('first_name')
-        last_name = request.form.get('last_name')
-        email = request.form.get('email')
-        password = request.form.get('password')
-        company = request.form.get('company')
+@router.get("/register", response_class=HTMLResponse, name="auth.register")
+async def register_get(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
 
-        updates = {}
-        if first_name:
-            updates['first_name'] = first_name
-        if last_name:
-            updates['last_name'] = last_name
-        if email:
-            updates['email'] = email
-        if password:
-            updates['password_hash'] = generate_password_hash(password)
-        if company:
-            updates['company'] = company
+@router.post("/register", name="auth.register_post")
+async def register_post(
+    response: Response,
+    first_name: str = Form(...),
+    last_name: str = Form(...),
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    company: str = Form("")
+):
+    if not all([first_name, last_name, username, email, password]):
+        return RedirectResponse(url="/auth/register?flash=error&message=All required fields must be filled", status_code=303)
+    
+    if create_user(first_name, last_name, username, email, password, company):
+        return RedirectResponse(url="/auth/login?flash=success&message=Registration successful. Please log in.", status_code=303)
+    else:
+        return RedirectResponse(url="/auth/register?flash=error&message=Username or email already exists", status_code=303)
 
-        if not updates:
-            flash('No changes provided', 'error')
-            return redirect(url_for('auth.profile'))
+@router.get("/profile", response_class=HTMLResponse, name="auth.profile")
+async def profile_get(request: Request, current_user: User = Depends(get_current_user_from_cookie)):
+    return templates.TemplateResponse("profile.html", {"request": request, "user": current_user})
 
-        success = update_user(current_user.id, updates)
-        if success:
-            flash('Profile updated successfully!', 'success')
-            return redirect(url_for('auth.profile'))
-        else:
-            flash('Email already exists', 'error')
+@router.post("/profile", name="auth.profile_post")
+async def profile_post(
+    response: Response,
+    current_user: User = Depends(get_current_user_from_cookie),
+    first_name: Optional[str] = Form(None),
+    last_name: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    company: Optional[str] = Form(None)
+):
+    updates = {}
+    if first_name:
+        updates['first_name'] = first_name
+    if last_name:
+        updates['last_name'] = last_name
+    if email:
+        updates['email'] = email
+    if password:
+        updates['password'] = password 
+    if company:
+        updates['company'] = company
 
-    return render_template('profile.html', user=current_user)
+    if not updates:
+        return RedirectResponse(url="/auth/profile?flash=error&message=No changes provided", status_code=303)
 
-@bp.route('/profile_data', methods=['GET'])
-@login_required
-def profile_data():
+    success = update_user(current_user.id, updates)
+    if success:
+        return RedirectResponse(url="/auth/profile?flash=success&message=Profile updated successfully!", status_code=303)
+    else:
+        return RedirectResponse(url="/auth/profile?flash=error&message=Email already exists", status_code=303)
+
+@router.get("/profile_data", name="auth.profile_data")
+async def profile_data(current_user: User = Depends(get_current_user_from_cookie)):
     try:
-        avatar = f"{current_user.first_name[0]}.{current_user.last_name[0]}" if current_user.first_name and current_user.last_name else ""
-        return jsonify({'success': True, 'avatar': avatar})
+        avatar = current_user.avatar
+        return {"success": True, "avatar": avatar}
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    flash('You have been logged out.', 'success')
-    return redirect(url_for('auth.login'))
+@router.get("/logout", name="auth.logout")
+async def logout(response: Response):
+    response = RedirectResponse(url="/auth/login?flash=success&message=You have been logged out.", status_code=303)
+    response.delete_cookie("access_token")
+    return response
 
-@bp.route('/reset_password', methods=['GET', 'POST'])
-def reset_password():
-    if request.method == 'POST':
-        identifier = request.form['identifier']
-        password = request.form['password']
-        password_confirm = request.form['password_confirm']
-        if not password:
-            flash('Password cannot be empty', 'error')
-            return render_template('reset.html')
-        if password != password_confirm:
-            flash('Passwords do not match', 'error')
-            return render_template('reset.html')
-        user_data = get_user_by_username(identifier) or get_user_by_email(identifier)
-        if user_data:
-            password_hash = generate_password_hash(password)
-            success = update_user(user_data[0], {'password_hash': password_hash})
-            if success:
-                flash('Password reset successful. Please log in.', 'success')
-                return redirect(url_for('auth.login'))
-            else:
-                flash('Error resetting password', 'error')
+@router.get("/reset_password", response_class=HTMLResponse, name="auth.reset_password")
+async def reset_password_get(request: Request):
+    return templates.TemplateResponse("reset.html", {"request": request})
+
+@router.post("/reset_password", name="auth.reset_password_post")
+async def reset_password_post(
+    response: Response,
+    identifier: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...)
+):
+    if not password:
+        return RedirectResponse(url="/auth/reset_password?flash=error&message=Password cannot be empty", status_code=303)
+    if password != password_confirm:
+        return RedirectResponse(url="/auth/reset_password?flash=error&message=Passwords do not match", status_code=303)
+    
+    user_data = get_user_by_username(identifier) or get_user_by_email(identifier)
+    if user_data:
+        success = update_user(user_data[0], {'password': password})  # Hashes in update_user
+        if success:
+            return RedirectResponse(url="/auth/login?flash=success&message=Password reset successful. Please log in.", status_code=303)
         else:
-            flash('Invalid username or email', 'error')
-    return render_template('reset.html')
+            return RedirectResponse(url="/auth/reset_password?flash=error&message=Error resetting password", status_code=303)
+    else:
+        return RedirectResponse(url="/auth/reset_password?flash=error&message=Invalid username or email", status_code=303)
