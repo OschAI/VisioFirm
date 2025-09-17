@@ -7,6 +7,9 @@ import sqlite3
 import os
 from datetime import datetime
 import random
+import json
+from PIL import Image, ImageDraw
+import numpy as np
 
 def split_images(images, split_choices, split_ratios):
     """Split images into train/test/val sets based on specified ratios."""
@@ -304,49 +307,170 @@ def generate_pascal_voc_export(project, splits, setup_type):
     zip_buffer.seek(0)
     return zip_buffer
 
+
+def generate_classification_labels(project, splits, output_format='csv'):
+    """Generate classification labels in CSV, TXT, or JSON with splits."""
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for split_name, split_images in splits.items():
+            if output_format == 'csv':
+                csv_lines = ["image_id,image_name,class_name"]
+                for img_path in split_images:
+                    with sqlite3.connect(project.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (img_path,))
+                        result = cursor.fetchone()
+                        image_id = result[0] if result else ''
+                        cursor.execute('SELECT class_name FROM Annotations WHERE image_id = ?', (image_id,))
+                        result = cursor.fetchone()
+                        class_name = result[0] if result else ''
+                        csv_lines.append(f"{image_id},{os.path.basename(img_path)},{class_name}")
+                zip_file.writestr(f'annotation/{split_name}.csv', "\n".join(csv_lines))
+            elif output_format == 'txt':
+                for img_path in split_images:
+                    with sqlite3.connect(project.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (img_path,))
+                        image_id = cursor.fetchone()[0]
+                        cursor.execute('SELECT class_name FROM Annotations WHERE image_id = ?', (image_id,))
+                        result = cursor.fetchone()
+                        class_name = result[0] if result else ''
+                    txt_filename = os.path.splitext(os.path.basename(img_path))[0] + '.txt'
+                    zip_file.writestr(f'{split_name}/labels/{txt_filename}', class_name)
+            elif output_format == 'json':
+                data = []
+                for img_path in split_images:
+                    with sqlite3.connect(project.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (img_path,))
+                        image_id = cursor.fetchone()[0]
+                        cursor.execute('SELECT class_name FROM Annotations WHERE image_id = ?', (image_id,))
+                        result = cursor.fetchone()
+                        class_name = result[0] if result else ''
+                    data.append({'image_id': image_id, 'filename': os.path.basename(img_path), 'class': class_name})
+                zip_file.writestr(f'annotation/{split_name}.json', json.dumps(data, indent=2))
+            else:
+                raise ValueError(f"Unsupported output_format: {output_format}. Choose 'csv', 'txt', or 'json'.")
+
+            # Add images to split/images
+            for img_path in split_images:
+                with open(img_path, 'rb') as f:
+                    zip_file.writestr(f'{split_name}/images/{os.path.basename(img_path)}', f.read())
+
+    zip_buffer.seek(0)
+    return zip_buffer
+
 def generate_csv_export(project, splits, setup_type):
     """Generate CSV format export with proper folder structure."""
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for split_name, split_images in splits.items():
             csv_lines = []
-            header = "image_name,class_name,x,y,width,height" if setup_type != "Oriented Bounding Box" else "image_name,class_name,xc,yc,dx,dy,angle"
-            csv_lines.append(header)
-            for img_path in split_images:
-                with sqlite3.connect(project.db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (img_path,))
-                    image_id = cursor.fetchone()[0]
-                    cursor.execute('SELECT * FROM Annotations WHERE image_id = ?', (image_id,))
-                    for row in cursor.fetchall():
-                        class_name = row[4]
-                        if setup_type == "Bounding Box":
-                            x, y, width, height = row[5], row[6], row[7], row[8]
-                            csv_lines.append(f"{os.path.basename(img_path)},{class_name},{x},{y},{width},{height}")
-                        elif setup_type == "Oriented Bounding Box":
-                            xc = row[5] + (row[7] / 2) if row[7] else 0
-                            yc = row[6] + (row[8] / 2) if row[8] else 0
-                            dx = row[7] if row[7] else 0
-                            dy = row[8] if row[8] else 0
-                            angle = row[9] if row[9] else 0
-                            csv_lines.append(f"{os.path.basename(img_path)},{class_name},{xc},{yc},{dx},{dy},{angle}")
-                        elif setup_type == "Segmentation":
-                            segmentation = json.loads(row[10]) if row[10] else []
-                            if segmentation:
-                                xs = segmentation[0::2]
-                                ys = segmentation[1::2]
-                                x = min(xs)
-                                y = min(ys)
-                                width = max(xs) - x
-                                height = max(ys) - y
-                                csv_lines.append(f"{os.path.basename(img_path)},{class_name},{x},{y},{width},{height}")
-               
-                # Add image to split folder
-                with open(img_path, 'rb') as f:
-                    zip_file.writestr(f'{split_name}/{os.path.basename(img_path)}', f.read())
-           
+            if setup_type == "Classification":
+                header = "image_id,image_name,class_name"
+                csv_lines.append(header)
+                for img_path in split_images:
+                    with sqlite3.connect(project.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (img_path,))
+                        image_id = cursor.fetchone()[0]
+                        cursor.execute('SELECT class_name FROM Annotations WHERE image_id = ?', (image_id,))
+                        result = cursor.fetchone()
+                        class_name = result[0] if result else ''
+                        csv_lines.append(f"{image_id},{os.path.basename(img_path)},{class_name}")
+            else:
+                header = "image_id,image_name,class_name,x,y,width,height" if setup_type != "Oriented Bounding Box" else "image_id,image_name,class_name,xc,yc,dx,dy,angle"
+                csv_lines.append(header)
+                for img_path in split_images:
+                    with sqlite3.connect(project.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (img_path,))
+                        image_id = cursor.fetchone()[0]
+                        cursor.execute('SELECT * FROM Annotations WHERE image_id = ?', (image_id,))
+                        for row in cursor.fetchall():
+                            class_name = row[4]
+                            img_name = os.path.basename(img_path)
+                            if setup_type == "Bounding Box":
+                                x, y, width, height = row[5], row[6], row[7], row[8]
+                                csv_lines.append(f"{image_id},{img_name},{class_name},{x},{y},{width},{height}")
+                            elif setup_type == "Oriented Bounding Box":
+                                xc = row[5] + (row[7] / 2) if row[7] else 0
+                                yc = row[6] + (row[8] / 2) if row[8] else 0
+                                dx = row[7] if row[7] else 0
+                                dy = row[8] if row[8] else 0
+                                angle = row[9] if row[9] else 0
+                                csv_lines.append(f"{image_id},{img_name},{class_name},{xc},{yc},{dx},{dy},{angle}")
+                            elif setup_type == "Segmentation":
+                                segmentation = json.loads(row[10]) if row[10] else []
+                                if segmentation:
+                                    xs = segmentation[0::2]
+                                    ys = segmentation[1::2]
+                                    x = min(xs)
+                                    y = min(ys)
+                                    width = max(xs) - x
+                                    height = max(ys) - y
+                                    csv_lines.append(f"{image_id},{img_name},{class_name},{x},{y},{width},{height}")
             # Write CSV file to annotation folder
             zip_file.writestr(f'annotation/{split_name}.csv', "\n".join(csv_lines))
+            
+            # Add images to split folder
+            for img_path in split_images:
+                with open(img_path, 'rb') as f:
+                    zip_file.writestr(f'{split_name}/{os.path.basename(img_path)}', f.read())
    
+    zip_buffer.seek(0)
+    return zip_buffer
+
+def generate_mask_export(project, splits):
+    """Generate binary PNG mask export for semantic segmentation (white for annotations, black for background)."""
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for split_name, split_images in splits.items():
+            for img_path in split_images:
+                # Add image to zip in split/images/
+                with open(img_path, 'rb') as f:
+                    zip_file.writestr(f'{split_name}/images/{os.path.basename(img_path)}', f.read())
+                
+                # Create binary mask
+                with sqlite3.connect(project.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT image_id, width, height FROM Images WHERE absolute_path = ?', (img_path,))
+                    image_id, width, height = cursor.fetchone()
+                    
+                    mask = Image.new('L', (width, height), 0)  # Grayscale, background=0 (black)
+                    draw = ImageDraw.Draw(mask)
+                    
+                    cursor.execute('SELECT class_name, segmentation FROM Annotations WHERE image_id = ?', (image_id,))
+                    annotations = cursor.fetchall()
+                    print(f"Found {len(annotations)} annotations for image_id {image_id} ({os.path.basename(img_path)})")
+                    
+                    for class_name, seg_json in annotations:
+                        if not seg_json:
+                            print(f"Skipping empty segmentation for class {class_name}")
+                            continue
+                        try:
+                            points = json.loads(seg_json)
+                            if len(points) < 6:  # Minimum 3 points (x,y) for a polygon
+                                print(f"Invalid segmentation for class {class_name}: too few points {points}")
+                                continue
+                            point_tuples = [(points[i], points[i+1]) for i in range(0, len(points), 2)]
+                            #print(f"Drawing polygon for class {class_name}: {point_tuples}")
+                            draw.polygon(point_tuples, fill=255)  # Fill with white (255)
+                        except json.JSONDecodeError:
+                            print(f"Invalid JSON segmentation for class {class_name}: {seg_json}")
+                            continue
+                
+                # Check mask contents
+                mask_array = np.array(mask)
+                print(f"Mask for {os.path.basename(img_path)}: min={mask_array.min()}, max={mask_array.max()}")
+                
+                # Save mask to bytes and add to zip in split/labels/
+                mask_bytes = BytesIO()
+                mask.save(mask_bytes, format='PNG')
+                mask_bytes.seek(0)
+                
+                basename = os.path.splitext(os.path.basename(img_path))[0]
+                zip_file.writestr(f'{split_name}/labels/{basename}.png', mask_bytes.read())
+    
     zip_buffer.seek(0)
     return zip_buffer
