@@ -1,287 +1,128 @@
-import logging
-from flask import (
-    Blueprint, 
-    render_template, 
-    request,
-    jsonify, 
-    current_app)
-from flask_login import login_required
-from werkzeug.utils import secure_filename
+from fastapi import APIRouter, Request, Depends, Form, HTTPException, status, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from visiofirm.security import get_current_user_from_cookie, User
+from werkzeug.utils import secure_filename 
 import os
 import shutil
-import zipfile
-import tarfile
-import rarfile
-import sqlite3
 from filelock import FileLock
 import time
 import psutil
 import errno
-from visiofirm.config import PROJECTS_FOLDER, VALID_IMAGE_EXTENSIONS, get_cache_folder
-from visiofirm.models.project import Project
+from visiofirm.models import Project
+from visiofirm.config import PROJECTS_FOLDER, VALID_IMAGE_EXTENSIONS, VALID_VIDEO_EXTENSIONS, VALID_SETUP_TYPES, get_cache_folder
+# Direct imports to break circular dependency
+from visiofirm.projects import VFProjects, extract_archive, generate_unique_project_name, ensure_unique_project_name
 from visiofirm.utils import CocoAnnotationParser, YoloAnnotationParser, NameMatcher, is_valid_image
+import logging
+import hashlib
+from shutil import copyfileobj
+from datetime import datetime
+from typing import List, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-bp = Blueprint('dashboard', __name__)
+router = APIRouter()
+templates = Jinja2Templates(directory="visiofirm/templates")
 
-@bp.route('/')
-@login_required
-def index():
-    projects = []
-    for project_name in os.listdir(PROJECTS_FOLDER):
-        if project_name in ['temp_chunks', 'weights']:
-            continue
-        project_path = os.path.join(PROJECTS_FOLDER, project_name)
-        if os.path.isdir(project_path):
-            db_path = os.path.join(project_path, 'config.db')
-            creation_date = None
-            if os.path.exists(db_path):
-                try:
-                    with sqlite3.connect(db_path) as conn:
-                        cursor = conn.cursor()
-                        cursor.execute('SELECT creation_date FROM Project_Configuration WHERE project_name = ?', (project_name,))
-                        result = cursor.fetchone()
-                        creation_date = result[0] if result else None
-                except Exception as e:
-                    logger.error(f"Error fetching creation date for {project_name}: {e}")
-            
-            images_path = os.path.join(project_path, 'images')
-            image_files = [
-                f for f in os.listdir(images_path)
-                if os.path.isfile(os.path.join(images_path, f)) and os.path.splitext(f)[1].lower() in VALID_IMAGE_EXTENSIONS
-            ] if os.path.exists(images_path) else []
-            projects.append({
-                'name': project_name,
-                'images': [
-                    os.path.join('/projects', project_name, 'images', img)
-                    for img in image_files[:3]
-                ],
-                'creation_date': creation_date
-            })
-    
-    projects.sort(key=lambda p: p['creation_date'] or '', reverse=True)
-    return render_template('index.html', projects=projects)
-
-def extract_archive(file_path, extract_path):
-    """Extract archive files (zip, tar, rar) to the specified path and validate images."""
-    ext = os.path.splitext(file_path)[1].lower()
+async def get_current_user_optional(request: Request) -> Optional[User]:
     try:
-        if ext == '.zip':
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_path)
-        elif ext in {'.tar', '.tar.gz'}:
-            with tarfile.open(file_path, 'r:*') as tar_ref:
-                tar_ref.extractall(extract_path)
-        elif ext == '.rar':
-            with rarfile.RarFile(file_path) as rar_ref:
-                rar_ref.extractall(extract_path)
-        # Validate extracted images
-        for root, _, filenames in os.walk(extract_path):
-            for fname in filenames:
-                if os.path.splitext(fname)[1].lower() in VALID_IMAGE_EXTENSIONS:
-                    full_path = os.path.join(root, fname)
-                    if not is_valid_image(full_path):
-                        os.remove(full_path)
-                        logger.warning(f"Removed corrupted extracted image: {full_path}")
-    except Exception as e:
-        logger.error(f"Error extracting archive {file_path}: {e}")
-        raise
+        return await get_current_user_from_cookie(request)
+    except HTTPException:
+        return None
 
-@bp.route('/create_project', methods=['POST'])
-@login_required
-def create_project():
-    try:
-        project_name = request.form.get('project_name', '').strip()
-        description = request.form.get('description', '')
-        setup_type = request.form.get('setup_type', '').strip()
-        class_names = request.form.get('class_names', '')
-        upload_id = request.form.get('upload_id')
+def _process_temp_upload_dir(images_path, temp_upload_dir, videos_path: Optional[str] = None, setup_type: Optional[str] = None):
+    """Process files in temp_upload_dir: move valid images to images_path, flatten annotations to temp_upload_dir, handle archives by extracting and processing."""
+    all_files = os.listdir(temp_upload_dir)
+    image_paths = []
+    annotation_extensions = {'.json', '.yaml', '.txt'}
 
-        if not setup_type or not upload_id:
-            return jsonify({'error': 'Setup type and upload ID are required'}), 400
-        if setup_type not in {"Bounding Box", "Oriented Bounding Box", "Segmentation"}:
-            return jsonify({'error': 'Invalid setup type'}), 400
-
-        class_list = [cls.strip() for cls in class_names.replace(';', ',').replace('.', ',').split(',') if cls.strip()]
-
-        if not project_name:
-            project_name = generate_unique_project_name()
-        else:
-            project_name = ensure_unique_project_name(project_name)
-
-        project_path = os.path.join(PROJECTS_FOLDER, secure_filename(project_name))
-        images_path = os.path.join(project_path, 'images')
-        os.makedirs(images_path, exist_ok=True)
-
-        project = Project(project_name, description, setup_type, project_path)
-        project.add_classes(class_list)
-
-        cache_dir = get_cache_folder()
-        temp_base = os.path.join(cache_dir, 'temp_chunks')
-        os.makedirs(temp_base, exist_ok=True)
-        temp_upload_dir = os.path.join(temp_base, upload_id)
-        if not os.path.exists(temp_upload_dir):
-            return jsonify({'error': 'No files found for upload ID'}), 400
-
-        image_paths = []
-        annotation_extensions = {'.json', '.yaml', '.txt'}
-        files_to_process = []
-
-        for filename in os.listdir(temp_upload_dir):
-            file_path = os.path.join(temp_upload_dir, filename)
-            ext = os.path.splitext(filename)[1].lower()
-            if ext in VALID_IMAGE_EXTENSIONS or ext in annotation_extensions:
-                files_to_process.append((filename, file_path, ext))
-            elif ext in {'.zip', '.tar', '.tar.gz', '.rar'}:
-                extract_path = os.path.join(temp_upload_dir, f'extracted_{filename}')
-                os.makedirs(extract_path, exist_ok=True)
+    print(f"Processing {len(all_files)} files...")
+    for filename in all_files:
+        file_path = os.path.join(temp_upload_dir, filename)
+        ext = os.path.splitext(filename)[1].lower()
+        if setup_type:
+            if "Video" in setup_type:
+                if ext in VALID_IMAGE_EXTENSIONS or ext in annotation_extensions:
+                    logger.info(f"Skipping non-video file for video setup: {filename}")
+                    os.remove(file_path)
+                    continue
+            else:
+                if ext in VALID_VIDEO_EXTENSIONS:
+                    logger.info(f"Skipping video file for non-video setup: {filename}")
+                    os.remove(file_path)
+                    continue
+        if ext in VALID_IMAGE_EXTENSIONS:
+            if is_valid_image(file_path):
+                final_path = os.path.join(images_path, secure_filename(filename))
+                if not os.path.exists(final_path):
+                    lock_path = final_path + '.lock'
+                    with FileLock(lock_path):
+                        shutil.move(file_path, final_path)
+                    image_paths.append(os.path.abspath(final_path))
+                    logger.info(f"Moved image {filename} to {final_path}")
+                else:
+                    logger.info(f"Image {filename} already exists, skipping")
+            else:
+                logger.warning(f"Skipping corrupted image: {filename}")
+        elif ext in annotation_extensions:
+            logger.info(f"Keeping annotation {filename} in {temp_upload_dir}")
+        elif ext in {'.zip', '.tar', '.tar.gz', '.rar'}:
+            extract_path = os.path.join(temp_upload_dir, f'extracted_{filename}')
+            os.makedirs(extract_path, exist_ok=True)
+            try:
                 extract_archive(file_path, extract_path)
                 extracted_files = []
                 for root, _, filenames in os.walk(extract_path):
+                    extracted_files.extend(filenames)
+                processed_extracted = 0
+                for root, _, filenames in os.walk(extract_path):
                     for fname in filenames:
-                        file_ext = os.path.splitext(fname)[1].lower()
                         src_path = os.path.join(root, fname)
-                        extracted_files.append((fname, src_path, file_ext))
-                project.parse_and_add_annotations(extract_path, [f[1] for f in extracted_files if f[2] in VALID_IMAGE_EXTENSIONS])
-                for fname, src_path, file_ext in extracted_files:
-                    if file_ext in VALID_IMAGE_EXTENSIONS:
-                        if is_valid_image(src_path):
-                            final_path = os.path.join(images_path, secure_filename(fname))
-                            if not os.path.exists(final_path):
-                                lock_path = final_path + '.lock'
-                                with FileLock(lock_path):
-                                    shutil.move(src_path, final_path)
-                                image_paths.append(os.path.abspath(final_path))
-                                logger.info(f"Moved image {fname} from archive to {final_path}")
+                        file_ext = os.path.splitext(fname)[1].lower()
+                        if setup_type:
+                            if "Video" in setup_type:
+                                if file_ext in VALID_IMAGE_EXTENSIONS or file_ext in annotation_extensions:
+                                    logger.info(f"Skipping non-video extracted file: {fname}")
+                                    os.remove(src_path)
+                                    continue
+                                elif file_ext in VALID_VIDEO_EXTENSIONS:
+                                    final_path = os.path.join(videos_path, secure_filename(fname))
+                                    if not os.path.exists(final_path):
+                                        lock_path = final_path + '.lock'
+                                        with FileLock(lock_path):
+                                            shutil.move(src_path, final_path)
+                                        logger.info(f"Moved video {fname} from archive to {final_path}")
+                                    else:
+                                        logger.info(f"Video {fname} already exists, skipping")
                             else:
-                                logger.info(f"Image {fname} already exists, skipping")
+                                if file_ext in VALID_VIDEO_EXTENSIONS:
+                                    logger.info(f"Skipping video extracted file: {fname}")
+                                    os.remove(src_path)
+                                    continue
+                                elif file_ext in VALID_IMAGE_EXTENSIONS:
+                                    if is_valid_image(src_path):
+                                        final_path = os.path.join(images_path, secure_filename(fname))
+                                        if not os.path.exists(final_path):
+                                            lock_path = final_path + '.lock'
+                                            with FileLock(lock_path):
+                                                shutil.move(src_path, final_path)
+                                            image_paths.append(os.path.abspath(final_path))
+                                            logger.info(f"Moved image {fname} from archive to {final_path}")
+                                        else:
+                                            logger.info(f"Image {fname} already exists, skipping")
+                                    else:
+                                        logger.warning(f"Skipping corrupted image from archive: {fname}")
+                                elif file_ext in annotation_extensions:
+                                    dest_path = os.path.join(temp_upload_dir, secure_filename(fname))
+                                    lock_path = dest_path + '.lock'
+                                    with FileLock(lock_path):
+                                        shutil.move(src_path, dest_path)
+                                    logger.info(f"Flattened annotation {fname} to {temp_upload_dir}")
                         else:
-                            logger.warning(f"Skipping corrupted image from archive: {fname}")
-                    elif file_ext in annotation_extensions:
-                        dest_path = os.path.join(temp_upload_dir, secure_filename(fname))
-                        lock_path = dest_path + '.lock'
-                        with FileLock(lock_path):
-                            shutil.move(src_path, dest_path)
-                        logger.info(f"Moved annotation {fname} to {dest_path}")
-                shutil.rmtree(extract_path, ignore_errors=True)
-                os.remove(file_path)
-
-        for filename, file_path, ext in files_to_process:
-            if ext in VALID_IMAGE_EXTENSIONS:
-                if is_valid_image(file_path):
-                    final_path = os.path.join(images_path, secure_filename(filename))
-                    if not os.path.exists(final_path):
-                        lock_path = final_path + '.lock'
-                        with FileLock(lock_path):
-                            shutil.move(file_path, final_path)
-                        image_paths.append(os.path.abspath(final_path))
-                        logger.info(f"Moved image {filename} to {final_path}")
-                    else:
-                        logger.info(f"Image {filename} already exists, skipping")
-                else:
-                    logger.warning(f"Skipping corrupted image: {filename}")
-            elif ext in annotation_extensions:
-                logger.info(f"Keeping annotation {filename} in {temp_upload_dir}")
-
-        if not image_paths:
-            shutil.rmtree(project_path, ignore_errors=True)
-            return jsonify({'error': 'No valid images found to create the project'}), 400
-
-        project.add_images(image_paths)
-        project.parse_and_add_annotations(temp_upload_dir, image_paths)
-        shutil.rmtree(temp_upload_dir, ignore_errors=True)
-
-        return jsonify({'success': True, 'project_name': project_name})
-    except Exception as e:
-        logger.error(f"Error in create_project: {e}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
-
-def generate_unique_project_name():
-    base_name = "#VisioFirm"
-    counter = 0
-    while True:
-        project_name = base_name if counter == 0 else f"{base_name}_{counter}"
-        if not os.path.exists(os.path.join(PROJECTS_FOLDER, project_name)):
-            return project_name
-        counter += 1
-
-def ensure_unique_project_name(project_name):
-    original_name = secure_filename(project_name)
-    if original_name == "#VisioFirm":
-        return generate_unique_project_name()
-    counter = 1
-    new_name = original_name
-    while os.path.exists(os.path.join(PROJECTS_FOLDER, new_name)):
-        new_name = f"{original_name}_{counter}"
-        counter += 1
-    return new_name
-
-@bp.route('/get_unique_project_name', methods=['GET'])
-@login_required
-def get_unique_project_name():
-    try:
-        project_name = generate_unique_project_name()
-        return jsonify({'success': True, 'project_name': project_name})
-    except Exception as e:
-        logger.error(f"Error in get_unique_project_name: {e}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
-
-@bp.route('/import_images', methods=['POST'])
-@login_required
-def import_images():
-    try:
-        project_name = request.form.get('project_name')
-        upload_id = request.form.get('upload_id')
-
-        if not project_name or not upload_id:
-            return jsonify({'error': 'Project name and upload ID are required'}), 400
-
-        project_path = os.path.join(PROJECTS_FOLDER, secure_filename(project_name))
-        if not os.path.exists(project_path):
-            return jsonify({'error': 'Project does not exist'}), 404
-
-        images_path = os.path.join(project_path, 'images')
-        os.makedirs(images_path, exist_ok=True)
-
-        project = Project(project_name, '', '', project_path)
-
-        cache_dir = get_cache_folder()
-        temp_base = os.path.join(cache_dir, 'temp_chunks')
-        os.makedirs(temp_base, exist_ok=True)
-        temp_upload_dir = os.path.join(temp_base, upload_id)
-        if not os.path.exists(temp_upload_dir):
-            return jsonify({'error': 'No files found for upload ID'}), 400
-
-        image_paths = []
-        annotation_extensions = {'.json', '.yaml', '.txt'}
-        for filename in os.listdir(temp_upload_dir):
-            file_path = os.path.join(temp_upload_dir, filename)
-            ext = os.path.splitext(filename)[1].lower()
-            try:
-                if ext in VALID_IMAGE_EXTENSIONS:
-                    if is_valid_image(file_path):
-                        final_path = os.path.join(images_path, secure_filename(filename))
-                        if not os.path.exists(final_path):
-                            lock_path = final_path + '.lock'
-                            with FileLock(lock_path):
-                                shutil.move(file_path, final_path)
-                            image_paths.append(os.path.abspath(final_path))
-                            logger.info(f"Moved image {filename} to {final_path}")
-                        else:
-                            logger.info(f"Image {filename} already exists, skipping")
-                    else:
-                        logger.warning(f"Skipping corrupted image: {filename}")
-                elif ext in {'.zip', '.tar', '.tar.gz', '.rar'}:
-                    extract_path = os.path.join(temp_upload_dir, f'extracted_{filename}')
-                    os.makedirs(extract_path, exist_ok=True)
-                    extract_archive(file_path, extract_path)
-                    for root, _, filenames in os.walk(extract_path):
-                        for fname in filenames:
-                            file_ext = os.path.splitext(fname)[1].lower()
-                            src_path = os.path.join(root, fname)
+                            # No setup_type: original behavior
                             if file_ext in VALID_IMAGE_EXTENSIONS:
                                 if is_valid_image(src_path):
                                     final_path = os.path.join(images_path, secure_filename(fname))
@@ -300,37 +141,306 @@ def import_images():
                                 lock_path = dest_path + '.lock'
                                 with FileLock(lock_path):
                                     shutil.move(src_path, dest_path)
-                                logger.info(f"Moved annotation {fname} to {dest_path}")
-                    shutil.rmtree(extract_path, ignore_errors=True)
-                    os.remove(file_path)
+                                logger.info(f"Flattened annotation {fname} to {temp_upload_dir}")
+                        processed_extracted += 1
+                print(f"Processed {processed_extracted} files from archive {filename}")
+                logger.info(f"Processed {processed_extracted} files from archive {filename}")
             except Exception as e:
-                logger.error(f"Error processing file {filename}: {e}")
-                continue
+                logger.error(f"Error extracting archive {filename}: {e}")
+                print(f"Error extracting archive {filename}: {str(e)}")
+            finally:
+                os.remove(file_path)
+                shutil.rmtree(extract_path, ignore_errors=True)
+        elif ext in VALID_VIDEO_EXTENSIONS and videos_path:
+            final_path = os.path.join(videos_path, secure_filename(filename))
+            if not os.path.exists(final_path):
+                lock_path = final_path + '.lock'
+                with FileLock(lock_path):
+                    shutil.move(file_path, final_path)
+                logger.info(f"Moved video {filename} to {final_path}")
+            else:
+                logger.info(f"Video {filename} already exists, skipping")
 
-        if not image_paths:
-            return jsonify({'error': 'No new valid images found to import'}), 400
+    # Flatten annotations from subdirs (if any left after extraction)
+    for root, _, filenames in os.walk(temp_upload_dir):
+        for fname in filenames:
+            if os.path.splitext(fname)[1].lower() in annotation_extensions:
+                src_path = os.path.join(root, fname)
+                dest_path = os.path.join(temp_upload_dir, secure_filename(fname))
+                if src_path != dest_path:
+                    lock_path = dest_path + '.lock'
+                    with FileLock(lock_path):
+                        shutil.move(src_path, dest_path)
+                    logger.info(f"Flattened annotation {fname} to {temp_upload_dir}")
+
+    return image_paths
+
+@router.get("/", response_class=HTMLResponse)
+async def index(request: Request, current_user: Optional[User] = Depends(get_current_user_optional)):
+    if current_user is None:
+        # Redirect to login if not authenticated (mimic Flask @login_required)
+        return RedirectResponse(url="/auth/login?next=/", status_code=status.HTTP_302_FOUND)
+    
+    projects_list = VFProjects.list(PROJECTS_FOLDER)
+    projects = []
+    for p in projects_list:
+        project_full_path = os.path.join(PROJECTS_FOLDER, secure_filename(p['name']))
+        if not os.path.exists(os.path.join(project_full_path, 'config.db')):
+            continue 
+        
+        project = Project(p['name'], '', '', project_full_path)
+        p['setup_type'] = project.get_setup_type()
+        
+        if 'Video' in p['setup_type']:
+            videos_path = os.path.join(p['path'], 'videos')
+            if os.path.exists(videos_path):
+                video_files = sorted(
+                    [
+                        f for f in os.listdir(videos_path)
+                        if os.path.isfile(os.path.join(videos_path, f)) and os.path.splitext(f)[1].lower() in VALID_VIDEO_EXTENSIONS
+                    ],
+                    key=lambda f: os.path.getmtime(os.path.join(videos_path, f))
+                )
+            else:
+                video_files = []
+            p['videos'] = [
+                os.path.join('/projects', p['name'], 'videos', vid)
+                for vid in video_files[:3]
+            ]
+        else:
+            images_path = os.path.join(p['path'], 'images')
+            image_files = [
+                f for f in os.listdir(images_path)
+                if os.path.isfile(os.path.join(images_path, f)) and os.path.splitext(f)[1].lower() in VALID_IMAGE_EXTENSIONS
+            ] if os.path.exists(images_path) else []
+            p['images'] = [
+                os.path.join('/projects', p['name'], 'images', img)
+                for img in image_files[:3]
+            ]
+        projects.append(p)
+    return templates.TemplateResponse('dashboard.html', {"request": request, "projects": projects, "user": current_user})
+
+@router.post("/create_project")
+async def create_project(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    form = await request.form()
+    tracker.log_step('Creating project', details={'upload_id': form.get('upload_id')}) 
+    try:
+        project_name = form.get('project_name', '').strip()
+        description = form.get('description', '')
+        setup_type = form.get('setup_type', '').strip()
+        class_names = form.get('class_names', '')
+        upload_id = form.get('upload_id')
+
+        if not setup_type or not upload_id:
+            raise ValueError('Setup type and upload ID are required')
+        if setup_type not in VALID_SETUP_TYPES:
+            raise ValueError('Invalid setup type')
+
+        class_list = [cls.strip() for cls in class_names.replace(';', ',').replace('.', ',').split(',') if cls.strip()]
+
+        if not project_name:
+            project_name = generate_unique_project_name()
+        else:
+            project_name = ensure_unique_project_name(project_name)
+
+        print(f"Starting project: {project_name}")
+
+        project_path = os.path.join(PROJECTS_FOLDER, secure_filename(project_name))
+        images_path = os.path.join(project_path, 'images')
+        os.makedirs(images_path, exist_ok=True)
+
+        videos_path = None
+        target_fps = int(form.get('target_fps', 5))  # Get from form, default 5
+        if "Video" in setup_type:
+            videos_path = os.path.join(project_path, 'videos')
+            os.makedirs(videos_path, exist_ok=True)
+
+        project = Project(project_name, description, setup_type, project_path)
+        project.add_classes(class_list)
+
+        cache_dir = get_cache_folder()
+        temp_base = os.path.join(cache_dir, 'temp_chunks')
+        os.makedirs(temp_base, exist_ok=True)
+        temp_upload_dir = os.path.join(temp_base, upload_id)
+        if not os.path.exists(temp_upload_dir):
+            raise ValueError('No files found for upload ID')
+
+        image_paths = _process_temp_upload_dir(images_path, temp_upload_dir, videos_path=videos_path, setup_type=setup_type)
+
+        annotation_files = [f for f in os.listdir(temp_upload_dir) if f.lower().endswith(('.json', '.yaml', '.txt'))]
+
+        video_count = len([f for f in os.listdir(videos_path) if os.path.splitext(f)[1].lower() in VALID_VIDEO_EXTENSIONS]) if videos_path else 0
+        if not image_paths and video_count == 0 and not annotation_files:
+            tracker.log_error('No valid files found', step='Process uploaded files')
+            logger.error("No valid files found")
+            print("No valid files found to create the project")
+            raise HTTPException(status_code=400, detail='No valid files found')
+
+        print(f"Total Image count: {len(image_paths)}")
+
+        tracker.log_substep('Uploaded data processed', details={'image_count': len(image_paths), 'annotation_files_count': len(annotation_files)})
 
         project.add_images(image_paths)
+
+        if "Video" in setup_type:
+            video_paths = [os.path.join(videos_path, f) for f in os.listdir(videos_path) if os.path.splitext(f)[1].lower() in VALID_VIDEO_EXTENSIONS]
+            selected_total = 0
+            for v_path in video_paths:
+                video_id = project.add_video(v_path)
+                if video_id:
+                    selected = project.add_selected_frames(video_id, target_fps=target_fps)
+                    selected_total += selected
+            tracker.log_substep('Videos processed', details={'video_count': len(video_paths), 'selected_frames': selected_total})
+            print(f"Processed {len(video_paths)} videos, selected {selected_total} frame indices at {target_fps} FPS.")
+
         project.parse_and_add_annotations(temp_upload_dir, image_paths)
         shutil.rmtree(temp_upload_dir, ignore_errors=True)
 
-        return jsonify({'success': True})
-    except Exception as e:
-        logger.error(f"Error in import_images: {e}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        tracker.log_substep('Project setup completed', details={'total_images': len(image_paths), 'classes_added': len(class_list), 'setup_type': setup_type})
 
-@bp.route('/parse_annotations', methods=['POST'])
-@login_required
-def parse_annotations():
-    upload_id = request.form.get('upload_id')
-    class_names = request.form.get('class_names', '')
+        tracker.log_step('Project creation completed successfully', details={'project_name': project_name, 'total_images': len(image_paths), 'annotation_files_processed': len(annotation_files)})
+
+        print(f"Project {project_name} created successfully with {len(image_paths)} images")
+        return {"success": True, "project_name": project_name}
+    except Exception as e:
+        tracker.log_error(e, step='Project creation') 
+        logger.error(f"Error in create_project: {e}")
+        print(f"Error creating project: {str(e)}")
+        return JSONResponse(status_code=500, content={'error': f'Server error: {str(e)}'})
+
+@router.get("/get_unique_project_name")
+async def get_unique_project_name(request: Request, current_user: User = Depends(get_current_user_from_cookie)):  # Add request
+    try:
+        project_name = generate_unique_project_name()
+        return {"success": True, "project_name": project_name}
+    except Exception as e:
+        logger.error(f"Error in get_unique_project_name: {e}")
+        print(f"Error generating project name: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Server error: {str(e)}')
+
+@router.post("/import_images")
+async def import_images(
+    request: Request,
+    project_name: str = Form(...),
+    upload_id: str = Form(...),
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    tracker.log_step('Importing images', details={'project_name': project_name, 'upload_id': upload_id})
+    try:
+        project_path = os.path.join(PROJECTS_FOLDER, secure_filename(project_name))
+        if not os.path.exists(project_path):
+            raise ValueError('Project not found')
+        
+        images_path = os.path.join(project_path, 'images')
+        os.makedirs(images_path, exist_ok=True)
+        
+        cache_dir = get_cache_folder()
+        temp_upload_dir = os.path.join(cache_dir, 'temp_chunks', upload_id)
+        
+        # Get setup_type from existing project
+        project = Project(project_name, '', '', project_path)
+        setup_type = project.get_setup_type()
+        videos_path = os.path.join(project_path, 'videos') if "Video" in setup_type else None
+        if videos_path:
+            os.makedirs(videos_path, exist_ok=True)
+        
+        # Process files
+        image_paths = _process_temp_upload_dir(images_path, temp_upload_dir, videos_path=videos_path, setup_type=setup_type)
+
+        annotation_files = [f for f in os.listdir(temp_upload_dir) if f.lower().endswith(('.json', '.yaml', '.txt'))]
+        video_count = len([f for f in os.listdir(videos_path) if os.path.splitext(f)[1].lower() in VALID_VIDEO_EXTENSIONS]) if videos_path else 0
+        if not image_paths and not annotation_files and video_count == 0:
+            raise ValueError('No new images or annotations found')
+
+        if image_paths or annotation_files:
+            if image_paths:
+                print("Adding new images to project database...")
+                added_count = 0
+                for path in image_paths:
+                    if project.add_image(path):
+                        added_count += 1
+                print(f"Added {added_count}/{len(image_paths)} new images")
+                tracker.log_substep('Added new images', details={'count': added_count, 'total_new': len(image_paths)})
+
+            all_image_paths = image_paths
+            if not image_paths:
+                existing_images = project.get_images()
+                all_image_paths = [img[1] for img in existing_images]
+                tracker.log_substep('Using existing images for annotations', details={'count': len(all_image_paths)})
+
+            if all_image_paths:
+                project.parse_and_add_annotations(temp_upload_dir, all_image_paths)
+                tracker.log_substep('Parsed and added annotations', details={'files': len(annotation_files), 'images_processed': len(all_image_paths)})
+            else:
+                raise ValueError('No images available for annotations')
+
+            if "Video" in setup_type:
+                target_fps = 5  # Default for import; or add form param if needed
+                video_paths = [os.path.join(videos_path, f) for f in os.listdir(videos_path) if os.path.splitext(f)[1].lower() in VALID_VIDEO_EXTENSIONS]
+                selected_total = 0
+                for v_path in video_paths:
+                    video_id = project.add_video(v_path)
+                    if video_id:
+                        selected = project.add_selected_frames(video_id, target_fps=target_fps)
+                        selected_total += selected
+                tracker.log_substep('Videos processed', details={'video_count': len(video_paths), 'selected_frames': selected_total})
+                print(f"Processed {len(video_paths)} videos, selected {selected_total} frame indices at {target_fps} FPS.")
+
+            tracker.log_step('Import completed', details={'project_name': project_name, 'new_images': len(image_paths), 'annotations_processed': len(annotation_files)})
+            shutil.rmtree(temp_upload_dir, ignore_errors=True)
+            print(f"Import to {project_name} completed: {len(image_paths)} new images, {len(annotation_files)} annotations processed")
+            return {"success": True, "new_images": len(image_paths), "annotations_processed": len(annotation_files)}
+        else:
+            raise ValueError('No new images or annotations found')
+    except Exception as e:
+        tracker.log_error(e, step='Import images')
+        logger.error(f"Error in import_images: {e}")
+        print(f"Error importing to {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Server error: {str(e)}')
+
+@router.post("/log_error")
+async def log_error(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    data = await request.json()
+    error_msg = data.get('message', 'Unknown frontend error')
+    endpoint = data.get('endpoint', 'unknown')
+    status_code = data.get('status', 0)
+    try:
+        class FrontendError(Exception):
+            pass
+        fe = FrontendError(f"Frontend error on {endpoint}: {error_msg} (status: {status_code})")
+        tracker.log_error(fe, step='Frontend error report')
+        logger.error(f"Frontend error logged: {error_msg} on {endpoint} (status: {status_code})")
+        print(f"Frontend error reported: {error_msg} on {endpoint}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to log frontend error: {e}")
+        print(f"Failed to log frontend error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/parse_annotations")
+async def parse_annotations(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    form = await request.form()
+    upload_id = form.get('upload_id')
+    class_names = form.get('class_names', '')
     project_classes = [cls.strip() for cls in class_names.replace(';', ',').replace('.', ',').split(',') if cls.strip()]
 
     cache_dir = get_cache_folder()
     temp_base = os.path.join(cache_dir, 'temp_chunks')
     temp_upload_dir = os.path.join(temp_base, upload_id)
     if not os.path.exists(temp_upload_dir):
-        return jsonify({'error': 'Upload ID not found'}), 404
+        raise HTTPException(status_code=404, detail='Upload ID not found')
 
     annotation_files = [f for f in os.listdir(temp_upload_dir) if f.endswith('.json') or f.endswith('.yaml')]
 
@@ -343,6 +453,7 @@ def parse_annotations():
 
     name_matcher = NameMatcher(project_classes)
 
+    print(f"Parsing {len(annotation_files)} annotation files...")
     for anno_file in annotation_files:
         anno_path = os.path.join(temp_upload_dir, anno_file)
         if anno_file.endswith('.json'):
@@ -375,91 +486,83 @@ def parse_annotations():
             except Exception as e:
                 logger.error(f"Error parsing YOLO file {anno_file} for summary: {e}")
 
-    return jsonify({'success': True, 'summary': summary})
+    print(f"Annotation parsing complete: {summary['annotated_images']} annotated images found")
+    return {"success": True, "summary": summary}
 
-@bp.route('/upload_chunk', methods=['POST'])
-@login_required
-def upload_chunk():
-    if 'chunk' not in request.files:
-        return jsonify({'error': 'No chunk provided'}), 400
-    
-    chunk = request.files['chunk']
-    upload_id = request.form.get('upload_id')
-    file_id = request.form.get('file_id')
-    chunk_index = int(request.form.get('chunk_index'))
-    filename = secure_filename(request.form.get('filename'))
-
+@router.post("/upload_chunk")
+async def upload_chunk(
+    request: Request,  # Add request (for potential tracker use later)
+    chunk: UploadFile = File(...),
+    upload_id: str = Form(...),
+    file_id: str = Form(...),
+    chunk_index: int = Form(...),
+    filename: str = Form(...)
+):
+    secure_filename(filename)  # Validate
     if not all([upload_id, file_id, filename]):
-        return jsonify({'error': 'Missing upload parameters'}), 400
+        raise HTTPException(status_code=400, detail='Missing upload parameters')
 
-    # Change to user cache-based temp dir
     cache_dir = get_cache_folder()
-    temp_base = os.path.join(cache_dir, 'temp_chunks')  # New subdir for chunks
+    temp_base = os.path.join(cache_dir, 'temp_chunks')
     os.makedirs(temp_base, exist_ok=True)
     
     temp_dir = os.path.join(temp_base, upload_id, file_id)
     os.makedirs(temp_dir, exist_ok=True)
     
-    # Clean up stale temporary files (older than 1 hour)
     try:
         current_time = time.time()
         for temp_upload_id in os.listdir(temp_base):
             temp_upload_path = os.path.join(temp_base, temp_upload_id)
             if os.path.isdir(temp_upload_path):
                 mtime = os.path.getmtime(temp_upload_path)
-                if current_time - mtime > 3600:  # 1 hour
+                if current_time - mtime > 3600:
                     shutil.rmtree(temp_upload_path, ignore_errors=True)
                     logger.info(f"Cleaned up stale temp directory: {temp_upload_path}")
     except Exception as e:
         logger.warning(f"Error cleaning up stale temp files: {e}")
 
-    # Validate temporary directory
     try:
         temp_stat = os.stat(temp_base)
         if not os.access(temp_base, os.W_OK):
             logger.error(f"Temporary directory {temp_base} is not writable")
-            return jsonify({'error': 'Server error: Temporary directory not writable'}), 500
-        # Check available disk space (in bytes)
+            raise HTTPException(status_code=500, detail='Server error: Temporary directory not writable')
         total, used, free = shutil.disk_usage(temp_base)
-        chunk_size = chunk.seek(0, os.SEEK_END)
-        chunk.seek(0)  # Reset to start
+        chunk_size = chunk.size  # Use UploadFile.size
         if free < chunk_size:
             logger.error(f"Insufficient disk space in {temp_base}: {free} bytes available, {chunk_size} bytes needed")
-            return jsonify({'error': 'Server error: Insufficient disk space'}), 500
-        # Log disk and memory usage
+            raise HTTPException(status_code=500, detail='Server error: Insufficient disk space')
         memory = psutil.virtual_memory()
         logger.info(f"System resources: Disk {free / (1024**3):.2f} GB available, Memory {memory.available / (1024**3):.2f} GB available")
     except Exception as e:
         logger.error(f"Error validating temporary directory: {e}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f'Server error: {str(e)}')
 
     chunk_path = os.path.join(temp_dir, f'chunk_{chunk_index}')
     try:
         start_time = time.time()
         logger.info(f"Received chunk {chunk_index} for {filename}, size: {chunk_size} bytes")
-        chunk.save(chunk_path)
+        with open(chunk_path, "wb") as buffer:
+            shutil.copyfileobj(chunk.file, buffer)
         elapsed_time = time.time() - start_time
         logger.info(f"Saved chunk {chunk_index} for {filename} at {chunk_path}, size: {os.path.getsize(chunk_path)} bytes, took {elapsed_time:.2f} seconds")
-        return jsonify({'success': True})
+        return {"success": True}
     except Exception as e:
         logger.error(f"Error saving chunk {chunk_index} for {filename}: {e}")
-        return jsonify({'error': f'Chunk save failed: {str(e)}'}), 500
+        print(f"Error saving chunk {chunk_index}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Chunk save failed: {str(e)}')
 
-@bp.route('/assemble_file', methods=['POST'])
-@login_required
-def assemble_file():
-    import hashlib
-    from shutil import copyfileobj  # For streaming copy
-
-    # Parse form data (compatible with uploads)
-    upload_id = request.form.get('upload_id')
-    file_id = request.form.get('file_id')
-    total_chunks = int(request.form.get('total_chunks', 0))
-    filename = secure_filename(request.form.get('filename'))
-    expected_hash = request.form.get('file_hash', '')
-
+@router.post("/assemble_file")
+async def assemble_file(
+    request: Request,
+    upload_id: str = Form(...),
+    file_id: str = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    expected_hash: Optional[str] = Form(None)
+):
+    filename = secure_filename(filename)
     if not all([upload_id, file_id, filename, total_chunks]):
-        return jsonify({'error': 'Missing assembly parameters'}), 400
+        raise HTTPException(status_code=400, detail='Missing assembly parameters')
 
     cache_dir = get_cache_folder()
     temp_base = os.path.join(cache_dir, 'temp_chunks')
@@ -474,16 +577,15 @@ def assemble_file():
             start_time = time.time()
             logger.info(f"Starting assembly for {filename} (ID: {file_id}) with {total_chunks} chunks")
 
-            # Disk space check
             total, used, free = shutil.disk_usage(os.path.dirname(final_path))
             estimated_size = sum(os.path.getsize(os.path.join(temp_dir, f'chunk_{i}'))
                                  for i in range(total_chunks) if os.path.exists(os.path.join(temp_dir, f'chunk_{i}')))
-            if free < estimated_size * 1.1:  # Add 10% buffer for safety
+            if free < estimated_size * 1.1:
                 logger.error(f"Insufficient disk space for {filename}: {free / (1024**3):.2f} GB available, "
                              f"{estimated_size / (1024**3):.2f} GB needed")
-                return jsonify({'error': 'Insufficient disk space for file assembly'}), 507  # 507 Insufficient Storage
+                print(f"Assembly failed for {filename}: Insufficient disk space")
+                raise HTTPException(status_code=507, detail='Insufficient disk space for file assembly')
 
-            # Log system resources
             memory = psutil.virtual_memory()
             logger.info(f"System resources: Disk {free / (1024**3):.2f} GB available, "
                         f"Memory {memory.available / (1024**3):.2f} GB available")
@@ -499,80 +601,77 @@ def assemble_file():
                     logger.info(f"Assembling chunk {i}/{total_chunks} for {filename}, size: {chunk_size} bytes")
 
                     with open(chunk_path, 'rb') as chunk_file:
-                        copyfileobj(chunk_file, f)  # Stream copy to reduce memory usage
+                        copyfileobj(chunk_file, f)
 
-                    os.remove(chunk_path)  # Clean up chunk immediately to free space
+                    os.remove(chunk_path)
 
-            # Hash verification
             if expected_hash:
                 with open(final_path, 'rb') as f:
                     hasher = hashlib.md5()
-                    while chunk := f.read(4096):  # Stream hash computation
+                    while chunk := f.read(4096):
                         hasher.update(chunk)
                     assembled_hash = hasher.hexdigest()
 
                 if assembled_hash != expected_hash:
                     os.remove(final_path)
                     logger.error(f"Hash mismatch for {filename}: expected {expected_hash}, got {assembled_hash}")
-                    return jsonify({'error': 'File corrupted during assembly (hash mismatch)'}), 400
+                    print(f"Assembly failed for {filename}: Hash mismatch")
+                    raise HTTPException(status_code=400, detail='File corrupted during assembly (hash mismatch)')
 
             elapsed_time = time.time() - start_time
             final_size = os.path.getsize(final_path)
             logger.info(f"File {filename} assembled at {final_path}, size: {final_size} bytes, took {elapsed_time:.2f} seconds")
 
-            # Final cleanup (remove empty temp_dir)
             try:
                 os.rmdir(temp_dir)
             except OSError as e:
-                if e.errno != errno.ENOTEMPTY:  # Ignore if not empty (shouldn't happen)
+                if e.errno != errno.ENOTEMPTY:
                     logger.warning(f"Cleanup warning for {temp_dir}: {str(e)}")
 
-            return jsonify({'success': True, 'file_path': final_path})
+            return {"success": True, "file_path": final_path}
 
     except FileNotFoundError as e:
         logger.error(f"Assembly failed for {filename}: {str(e)}")
-        return jsonify({'error': str(e)}), 400
+        print(f"Assembly failed for {filename}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except OSError as e:
         logger.error(f"OS error during assembly of {filename}: {str(e)}")
-        return jsonify({'error': 'Server storage error'}), 500
+        print(f"OS error assembling {filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail='Server storage error')
     except Exception as e:
         logger.error(f"Unexpected error assembling {filename}: {str(e)}", exc_info=True)
-        return jsonify({'error': 'Assembly failed due to server error'}), 500
+        print(f"Unexpected error assembling {filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail='Assembly failed due to server error')
         
-@bp.route('/check_upload_status', methods=['POST'])
-@login_required
-def check_upload_status():
-    upload_id = request.form.get('upload_id')
-    file_id = request.form.get('file_id')
-    
+@router.post("/check_upload_status")
+async def check_upload_status(
+    request: Request,  # Add request
+    upload_id: str = Form(...),
+    file_id: str = Form(...)
+):
     cache_dir = get_cache_folder()
     temp_base = os.path.join(cache_dir, 'temp_chunks')
     
     temp_dir = os.path.join(temp_base, upload_id, file_id)
     if not os.path.exists(temp_dir):
-        return jsonify({'uploaded_chunks': 0})
+        return {"uploaded_chunks": 0}
     
     uploaded_chunks = len([f for f in os.listdir(temp_dir) if f.startswith('chunk_')])
     logger.info(f"Checked upload status for upload_id={upload_id}, file_id={file_id}: {uploaded_chunks} chunks uploaded")
-    return jsonify({'uploaded_chunks': uploaded_chunks})
+    return {"uploaded_chunks": uploaded_chunks}
 
-@bp.route('/delete_project/<project_name>', methods=['POST'])
-@login_required
-def delete_project(project_name):
-    project_path = os.path.join(PROJECTS_FOLDER, secure_filename(project_name))
-    if os.path.exists(project_path):
-        try:
-            shutil.rmtree(project_path)
-            logger.info(f"Deleted project {project_name}")
-            return jsonify({'success': True})
-        except Exception as e:
-            logger.error(f"Error deleting project {project_name}: {e}")
-            return jsonify({'error': f'Deletion failed: {str(e)}'}), 500
-    return jsonify({'error': 'Project not found'}), 404
+@router.post("/delete_project/{project_name}")
+async def delete_project(request: Request, project_name: str, current_user: User = Depends(get_current_user_from_cookie)):
+    print(f"Deleting project: {project_name}")
+    if VFProjects.delete_project(project_name, PROJECTS_FOLDER):
+        logger.info(f"Deleted project {project_name}")
+        print(f"Project {project_name} deleted successfully")
+        return {"success": True}
+    print(f"Project {project_name} not found")
+    raise HTTPException(status_code=404, detail='Project not found')
 
-@bp.route('/cleanup_chunks', methods=['POST'])
-@login_required
-def cleanup_chunks():
+@router.post("/cleanup_chunks")
+async def cleanup_chunks(request: Request, current_user: User = Depends(get_current_user_from_cookie)):
     cache_dir = get_cache_folder()
     temp_base = os.path.join(cache_dir, 'temp_chunks')
     try:
@@ -580,41 +679,44 @@ def cleanup_chunks():
             shutil.rmtree(temp_base, ignore_errors=True)
         os.makedirs(temp_base, exist_ok=True)
         logger.info("Cleaned up temporary chunk directory")
-        return jsonify({'success': True})
+        print("Temporary chunks cleaned up")
+        return {"success": True}
     except Exception as e:
         logger.error(f"Error cleaning up chunks: {e}")
-        return jsonify({'error': f'Cleanup failed: {str(e)}'}), 500
+        print(f"Error cleaning up chunks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Cleanup failed: {str(e)}')
 
-@bp.route('/cleanup_temp', methods=['POST'])
-@login_required
-def cleanup_temp():
+@router.post("/cleanup_temp")
+async def cleanup_temp(request: Request, current_user: User = Depends(get_current_user_from_cookie)):
     """Manually clean up all temporary files older than 1 hour."""
+    print("Starting manual temp cleanup...")
     cache_dir = get_cache_folder()
     temp_base = os.path.join(cache_dir, 'temp_chunks')
     try:
         current_time = time.time()
         cleaned = 0
         if os.path.exists(temp_base):
-            for temp_upload_id in os.listdir(temp_base):
+            stale_dirs = [d for d in os.listdir(temp_base) if os.path.isdir(os.path.join(temp_base, d))]
+            for temp_upload_id in stale_dirs:
                 temp_upload_path = os.path.join(temp_base, temp_upload_id)
-                if os.path.isdir(temp_upload_path):
-                    mtime = os.path.getmtime(temp_upload_path)
-                    if current_time - mtime > 3600:  # 1 hour
-                        shutil.rmtree(temp_upload_path, ignore_errors=True)
-                        logger.info(f"Cleaned up stale temp directory: {temp_upload_path}")
-                        cleaned += 1
+                mtime = os.path.getmtime(temp_upload_path)
+                if current_time - mtime > 3600:
+                    shutil.rmtree(temp_upload_path, ignore_errors=True)
+                    logger.info(f"Cleaned up stale temp directory: {temp_upload_path}")
+                    cleaned += 1
         logger.info(f"Manual temp cleanup completed, removed {cleaned} stale directories")
-        return jsonify({'success': True, 'cleaned': cleaned})
+        print(f"Manual temp cleanup completed, removed {cleaned} stale directories")
+        return {"success": True, "cleaned": cleaned}
     except Exception as e:
         logger.error(f"Error during manual temp cleanup: {e}")
-        return jsonify({'error': f'Cleanup failed: {str(e)}'}), 500
+        print(f"Error during manual temp cleanup: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Cleanup failed: {str(e)}')
 
-@bp.route('/get_project_overview/<project_name>', methods=['GET'])
-@login_required
-def get_project_overview(project_name):
+@router.get("/get_project_overview/{project_name}")
+async def get_project_overview(request: Request, project_name: str, current_user: User = Depends(get_current_user_from_cookie)):
     project_path = os.path.join(PROJECTS_FOLDER, secure_filename(project_name))
     if not os.path.exists(project_path):
-        return jsonify({'error': 'Project not found'}), 404
+        raise HTTPException(status_code=404, detail='Project not found')
 
     try:
         project = Project(project_name, '', '', project_path)
@@ -631,7 +733,9 @@ def get_project_overview(project_name):
             'class_distribution': class_distribution,
             'annotations_per_image': annotations_per_image
         }
-        return jsonify(data)
+        print(f"Project overview for {project_name}: {total_images} total, {annotated_images} annotated")
+        return data
     except Exception as e:
         logger.error(f"Error fetching overview for {project_name}: {e}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        print(f"Error fetching overview for {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Server error: {str(e)}')

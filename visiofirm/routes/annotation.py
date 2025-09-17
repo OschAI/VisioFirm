@@ -1,268 +1,314 @@
-from flask import Blueprint, render_template, request, jsonify, send_file, current_app
-from flask_login import login_required, current_user
+# visiofirm/routes/annotation.py
+from fastapi import APIRouter, Request, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from visiofirm.security import get_current_user_from_cookie, User
+from tqdm import tqdm
 import os
-import sqlite3
-from visiofirm.config import PROJECTS_FOLDER
-from visiofirm.models.project import Project
-from visiofirm.models.user import get_user_by_id
-from io import BytesIO
-import zipfile
-from visiofirm.utils.export_utils import split_images, generate_coco_export, generate_yolo_export, generate_pascal_voc_export, generate_csv_export
-import logging
-from werkzeug.utils import secure_filename
-from visiofirm.utils.VFPreAnnotator import PreAnnotator
 import json
-import threading
+from visiofirm.config import PROJECTS_FOLDER
+from visiofirm.projects import VFProjects
+from visiofirm.models.project import Project 
+from visiofirm.models.user import get_user_by_id
+from visiofirm.preannotator import VFPreAnnotator
+from visiofirm.blindtrust import VFBlindTrust
+from visiofirm.exporter import VFExporter
+from visiofirm.imagedownloader import VFImageDownloader
+from visiofirm.imageremover import VFImageRemover
+from visiofirm.tracker import VFTracker
+import logging
+import sqlite3
+from werkzeug.utils import secure_filename
+from typing import Optional, Dict, Any
 
-bp = Blueprint('annotation', __name__, url_prefix='/annotation')
-logging.basicConfig(level=logging.INFO)
+router = APIRouter(prefix="/annotation")
+templates = Jinja2Templates(directory="visiofirm/templates")
 logger = logging.getLogger(__name__)
 
-# In-memory storage for pre-annotation and blind trust status
+# In-memory storage for status (shared for web; API can use instance attrs)
 preannotation_status = {}
 preannotation_progress = {}
 blind_trust_status = {}
 blind_trust_progress = {}
+preannotation_instances = {}
 
-@bp.route('/ai_preannotator_config', methods=['POST'])
-@login_required
-def ai_preannotator_config():
-    """
-    Handle AI pre-annotation configuration and execution in a background thread.
-    """
+@router.get('/check_gpu')
+async def check_gpu(request: Request): 
+    tracker = request.app.tracker 
+    tracker.log_step('Checking GPU availability')
     try:
-        project_name = request.form.get('project_name')
-        mode = request.form.get('mode')
-        device = request.form.get('processing_unit', 'cpu')
-        box_threshold = float(request.form.get('box_threshold', 0.2))
+        import torch
+        has_gpu = torch.cuda.is_available()
+        tracker.log_substep('GPU check completed', details={'available': has_gpu})
+        tracker.log_step('GPU check successful')
+        logger.info(f"GPU check: {'Available' if has_gpu else 'Not available'}")
+        print(f"GPU check: {'Available' if has_gpu else 'Not available'}")
+        return {'success': True, 'has_gpu': has_gpu}
+    except ImportError as e:
+        tracker.log_error(e, step='GPU check')
+        logger.error(f"Failed to import torch: {e}")
+        print(f"GPU check failed: PyTorch not installed")
+        raise HTTPException(status_code=500, detail='PyTorch not installed')
+    except Exception as e:
+        tracker.log_error(e, step='GPU check')
+        logger.error(f"Error checking GPU: {e}")
+        print(f"GPU check error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Optional user dependency that returns None if not authenticated (for redirects)
+async def get_current_user_optional(request: Request) -> Optional[User]:
+    try:
+        return get_current_user_from_cookie(request=request)
+    except HTTPException:
+        return None
+
+@router.post('/ai_preannotator_config')
+async def ai_preannotator_config(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app instead of get_current_app()
+    form = await request.form()
+    tracker.log_step('Configuring AI preannotator', details={'project_name': form.get('project_name'), 'mode': form.get('mode')})
+    try:
+        project_name = form.get('project_name')
+        mode = form.get('mode')
+        device = form.get('processing_unit', 'cpu')
+        box_threshold = float(form.get('box_threshold', 0.2))
 
         if not project_name or not mode:
-            return jsonify({'success': False, 'error': 'Project name and mode required'}), 400
+            raise ValueError('Project name and mode required')
 
-        if preannotation_status.get(project_name) == 'running':
-            return jsonify({'success': False, 'error': 'Pre-annotation is already running'}), 400
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
 
-        project_path = os.path.join(PROJECTS_FOLDER, project_name)
-        config_db_path = os.path.join(project_path, 'config.db')
+        key = project_name  # Use project_name as key for status
+        if preannotation_status.get(key) == 'running':
+            raise RuntimeError('Pre-annotation is already running')
 
-        if not os.path.exists(config_db_path):
-            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        print(f"VisioFirm is pre-annotating your images for project '{project_name}' using {mode} mode...")
 
-        # Set initial status and progress
-        preannotation_status[project_name] = 'running'
-        preannotation_progress[project_name] = 0
-
-        # Define the background task with all parameters
-        def run_preannotation(project_name, mode, device, box_threshold, dino_model, model_path, config_db_path):
-            try:
-                # Instantiate PreAnnotator inside the thread
-                if mode == 'zero-shot':
-                    model_type = f"grounding_dino_{dino_model}"
-                    proc = PreAnnotator(
-                        model_type=model_type,
-                        config_db_path=config_db_path,
-                        device=device,
-                        box_threshold=box_threshold
-                    )
-                elif mode == 'custom-model':
-                    proc = PreAnnotator(
-                        model_type="yolo",
-                        yolo_model_path=model_path,
-                        config_db_path=config_db_path,
-                        device=device,
-                        box_threshold=box_threshold
-                    )
-                else:
-                    raise ValueError("Invalid mode")
-
-                # pre-annotation process
-                proc.run_inferences()
-                preannotation_status[project_name] = 'completed'
-                preannotation_progress[project_name] = 100
-            except Exception as e:
-                logger.error(f"Pre-annotation failed for {project_name}: {e}")
-                preannotation_status[project_name] = 'failed'
-                preannotation_progress[project_name] = 0
-
-        # start the background thread with parameters
+        # Create instance
         if mode == 'zero-shot':
-            dino_model = request.form.get('dino_model', 'tiny')
-            thread = threading.Thread(
-                target=run_preannotation,
-                args=(project_name, mode, device, box_threshold, dino_model, None, config_db_path)
+            preannotator = VFPreAnnotator(
+                project=proj,
+                mode=mode,
+                device=device,
+                box_threshold=box_threshold,
+                dino_model=form.get('dino_model', 'tiny')
             )
+            model_details = form.get('dino_model', 'tiny')
         elif mode == 'custom-model':
-            model_path = request.form.get('model_path', 'yolov10x.pt')
-            thread = threading.Thread(
-                target=run_preannotation,
-                args=(project_name, mode, device, box_threshold, None, model_path, config_db_path)
+            preannotator = VFPreAnnotator(
+                project=proj,
+                mode=mode,
+                device=device,
+                box_threshold=box_threshold,
+                model_path=form.get('model_path', 'yolov10x.pt')
             )
+            model_details = form.get('model_path', 'yolov10x.pt')
+        elif mode == 'clip':
+            preannotator = VFPreAnnotator(
+                project=proj,
+                mode=mode,
+                device=device,
+                box_threshold=box_threshold  #ignored for classif
+            )
+            model_details = 'CLIP'
         else:
-            return jsonify({'success': False, 'error': 'Invalid mode'}), 400
+            raise ValueError('Invalid mode')
 
-        thread.start()
-        return jsonify({'success': True, 'message': 'Pre-annotation started'})
+        preannotation_status[key] = 'running'
+        preannotation_progress[key] = 0
+
+        # Background run with callback to update shared status
+        def callback(status_dict):
+            preannotation_status[key] = status_dict['status']
+            progress = status_dict.get('progress', 0)
+            preannotation_progress[key] = progress
+            tracker.log_substep('Preannotation progress update', details=status_dict)
+
+        preannotator.run_threaded(callback=callback)
+        tracker.log_step('Pre-annotation started successfully', details={'project': project_name, 'mode': mode, 'device': device, 'box_threshold': box_threshold})
+        print(f"VisioFirm is pre-annotating your images for project '{project_name}' using {mode} mode ({model_details}), threshold {box_threshold}...")
+        return {'success': True, 'message': 'Pre-annotation started'}
 
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        tracker.log_error(e, step='AI preannotator config')
+        logger.error(f"Error in ai_preannotator_config: {e}")
+        print(f"Pre-annotation failed for '{project_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.route('/check_preannotation_status', methods=['GET'])
-@login_required
-def check_preannotation_status():
-    """
-    Check the status and progress of the pre-annotation process for a project.
-    """
-    project_name = request.args.get('project_name')
+@router.get('/check_tracking_status')
+async def check_tracking_status(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    key = request.query_params.get('key')
+    if not key:
+        raise HTTPException(status_code=400, detail='Key required')
+    status = tracking_status.get(key, 'not_started')
+    progress = tracking_progress.get(key, 0)
+    results = tracking_results.get(key) if status == 'completed' else None
+    return {'success': True, 'status': status, 'progress': progress, 'results': results}
+    
+@router.get('/check_preannotation_status')
+async def check_preannotation_status(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    project_name = request.query_params.get('project_name')
     if not project_name:
-        return jsonify({'success': False, 'error': 'Project name required'}), 400
+        raise HTTPException(status_code=400, detail='Project name required')
     status = preannotation_status.get(project_name, 'not_started')
     progress = preannotation_progress.get(project_name, 0)
-    return jsonify({'success': True, 'status': status, 'progress': progress})
+    return {'success': True, 'status': status, 'progress': progress}
 
-@bp.route('/blind_trust', methods=['POST'])
-@login_required
-def blind_trust():
-    """
-    Convert pre-annotations above a confidence threshold to official annotations.
-    """
+@router.post('/blind_trust')
+async def blind_trust(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    form = await request.form()
+    tracker.log_step('Starting blind trust', details={'project_name': form.get('project_name'), 'threshold': form.get('confidence_threshold', 0.5)})
     try:
-        project_name = request.form.get('project_name')
-        confidence_threshold = float(request.form.get('confidence_threshold', 0.5))
+        project_name = form.get('project_name')
+        confidence_threshold = float(form.get('confidence_threshold', 0.5))
 
         if not project_name:
-            return jsonify({'success': False, 'error': 'Project name required'}), 400
+            raise ValueError('Project name required')
 
-        if blind_trust_status.get(project_name) == 'running':
-            return jsonify({'success': False, 'error': 'Blind Trust is already running'}), 400
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
 
-        project_path = os.path.join(PROJECTS_FOLDER, project_name)
-        config_db_path = os.path.join(project_path, 'config.db')
+        key = project_name
+        if blind_trust_status.get(key) == 'running':
+            raise RuntimeError('Blind Trust is already running')
 
-        if not os.path.exists(config_db_path):
-            return jsonify({'success': False, 'error': 'Project not found'}), 404
+        print(f"VisioFirm is running blind trust for project '{project_name}' (threshold: {confidence_threshold})...")
 
-        # capture user_id from the current user
-        user_id = current_user.id
-
-        # set initial status and progress
-        blind_trust_status[project_name] = 'running'
-        blind_trust_progress[project_name] = 0
-
-        # background task
-        def run_blind_trust(project_name, confidence_threshold, config_db_path, user_id):
-            try:
-                with sqlite3.connect(config_db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        SELECT DISTINCT i.image_id, i.absolute_path
-                        FROM Images i
-                        JOIN Preannotations p ON i.image_id = p.image_id
-                        WHERE p.confidence >= ?
-                    ''', (confidence_threshold,))
-                    images = cursor.fetchall()
-
-                    total_images = len(images)
-                    processed_images = 0
-
-                    for image_id, absolute_path in images:
-                        cursor.execute('''
-                            SELECT preannotation_id, type, class_name, x, y, width, height, rotation, segmentation, confidence
-                            FROM Preannotations
-                            WHERE image_id = ? AND confidence >= ?
-                        ''', (image_id, confidence_threshold))
-                        preannotations = cursor.fetchall()
-
-                        cursor.execute('DELETE FROM Annotations WHERE image_id = ?', (image_id,))
-
-                        for preanno in preannotations:
-                            cursor.execute('''
-                                INSERT INTO Annotations (image_id, user_id, type, class_name, x, y, width, height, rotation, segmentation)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (image_id, user_id, preanno[1], preanno[2], preanno[3], preanno[4], preanno[5], preanno[6], preanno[7], preanno[8]))
-                        
-                        cursor.execute('DELETE FROM Preannotations WHERE image_id = ?', (image_id,))
-
-                        cursor.execute('''
-                            INSERT OR REPLACE INTO ReviewedImages (image_id, user_id) VALUES (?, ?)
-                        ''', (image_id, user_id))
-
-                        processed_images += 1
-                        blind_trust_progress[project_name] = (processed_images / total_images) * 100 if total_images > 0 else 100
-
-                        conn.commit()
-
-                    blind_trust_status[project_name] = 'completed'
-            except Exception as e:
-                logger.error(f"Blind Trust failed for {project_name}: {e}")
-                blind_trust_status[project_name] = 'failed'
-                blind_trust_progress[project_name] = 0
-
-        thread = threading.Thread(
-            target=run_blind_trust,
-            args=(project_name, confidence_threshold, config_db_path, user_id)
+        blind_trust = VFBlindTrust(
+            project=proj,
+            confidence_threshold=confidence_threshold,
+            user_id=current_user.id
         )
-        thread.start()
-        return jsonify({'success': True, 'message': 'Blind Trust started'})
+
+        # Set initial status
+        blind_trust_status[key] = 'running'
+        blind_trust_progress[key] = 0
+
+        # Background run with callback
+        def callback(status_dict):
+            blind_trust_status[key] = status_dict['status']
+            progress = status_dict.get('progress', 0)
+            blind_trust_progress[key] = progress
+            tracker.log_substep('Blind trust progress update', details=status_dict)
+
+        blind_trust.run_threaded(callback=callback)
+        tracker.log_step('Blind trust started successfully', details={'project': project_name, 'threshold': confidence_threshold, 'user_id': current_user.id})
+        print(f"VisioFirm is running blind trust for project '{project_name}' (threshold: {confidence_threshold})...")
+        return {'success': True, 'message': 'Blind Trust started'}
 
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        tracker.log_error(e, step='Blind trust')
+        logger.error(f"Error in blind_trust: {e}")
+        print(f"Blind trust failed for '{project_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.route('/check_blind_trust_status', methods=['GET'])
-def check_blind_trust_status():
-    """
-    Check the status and progress of the blind trust process for a project.
-    """
-    project_name = request.args.get('project_name')
+@router.get('/check_blind_trust_status')
+async def check_blind_trust_status(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    project_name = request.query_params.get('project_name')
     if not project_name:
-        return jsonify({'success': False, 'error': 'Project name required'}), 400
+        raise HTTPException(status_code=400, detail='Project name required')
     status = blind_trust_status.get(project_name, 'not_started')
     progress = blind_trust_progress.get(project_name, 0)
-    return jsonify({'success': True, 'status': status, 'progress': progress})
+    return {'success': True, 'status': status, 'progress': progress}
 
-@bp.route('/<project_name>')
-@login_required
-def annotation(project_name):
+@router.get('/{project_name}', response_class=HTMLResponse)
+async def annotation(
+    project_name: str,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    print(f"Starting annotation for project: {project_name}") 
+    tracker = request.app.tracker  # Use request.app
+    tracker.log_step('Loading annotation interface', details={'project_name': project_name})
     try:
         project_path = os.path.join(PROJECTS_FOLDER, project_name)
         if not os.path.exists(project_path):
-            return "Project not found", 404
+            raise ValueError('Project not found')
         
         project = Project(project_name, "", "", project_path)
-        images = project.get_images()
         class_list = project.get_classes()
         setup_type = project.get_setup_type()
         
-        image_urls = [
-            os.path.join('/projects', project_name, 'images', os.path.basename(img[1]))
-            for img in images
-        ]
-        
-        image_annotators = {}
-        with sqlite3.connect(project.db_path) as conn:
-            cursor = conn.cursor()
+        if "Video" in setup_type:
+            raw_videos = project.get_videos()  # List of tuples: (video_id, absolute_path, name, duration, fps, frame_count)
+            video_data = []  # List of dicts for template
+            for vid in raw_videos:
+                if len(vid) < 6:
+                    logger.warning(f"Invalid video tuple in get_videos(): {vid}")
+                    continue
+                video_id = vid[0]
+                abs_path = vid[1]
+                filename = os.path.basename(abs_path)
+                url = os.path.join('/projects', project_name, 'videos', filename)
+                date = '2023-01-01'  # Placeholder; add creation_date to Videos table if needed
+                video_data.append({
+                    'id': video_id,
+                    'filename': filename,
+                    'url': url,
+                    'date': date,
+                    'annotated': False,  # Placeholder; adapt if needed (e.g., check if any frames annotated)
+                    'preannotated': False  # Placeholder
+                })
+            image_annotators = {}  # No annotators for videos (adapt if needed for frames)
+            tracker.log_substep('Project data loaded', details={'videos_count': len(video_data), 'classes_count': len(class_list)})
+            tracker.log_step('Annotation interface loaded successfully', details={'project_name': project_name, 'setup_type': setup_type})
+            print(f"Annotation interface loaded for {project_name} ({len(video_data)} videos)")
+            return templates.TemplateResponse('video_annotation.html',
+                                {"request": request,
+                                "project_name": project_name,
+                                "videos": video_data,  # Use "videos" key (frontend can adapt)
+                                "classes": class_list,
+                                "setup_type": setup_type,
+                                "image_annotators": image_annotators,
+                                "user": current_user,
+                                "current_user_avatar": current_user.avatar})
+        else:
+            raw_images = project.get_images()  # List of tuples, e.g., [(id, path), ...] or [(id, path, date), ...]
+            image_data = []  # List of dicts for template
+            
+            with sqlite3.connect(project.db_path) as conn:
+                cursor = conn.cursor()
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS ReviewedImages (
-                    image_id INTEGER PRIMARY KEY,
-                    reviewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    user_id INTEGER
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS ReviewedImages (
+                        image_id INTEGER PRIMARY KEY,
+                        reviewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        user_id INTEGER
+                    )
+                ''')
+                
+                cursor.execute('''
+                    SELECT i.absolute_path
+                    FROM Images i
+                    LEFT JOIN Annotations a ON i.image_id = a.image_id
+                    LEFT JOIN ReviewedImages r ON i.image_id = r.image_id
+                    WHERE a.annotation_id IS NOT NULL OR r.image_id IS NOT NULL
+                    GROUP BY i.image_id
+                ''')
+                annotated_images = {
+                    os.path.join('/projects', project_name, 'images', os.path.basename(row[0]))
+                    for row in cursor.fetchall()
+                }
             
-            cursor.execute('''
-                SELECT i.absolute_path
-                FROM Images i
-                LEFT JOIN Annotations a ON i.image_id = a.image_id
-                LEFT JOIN ReviewedImages r ON i.image_id = r.image_id
-                WHERE a.annotation_id IS NOT NULL OR r.image_id IS NOT NULL
-                GROUP BY i.image_id
-            ''')
-            annotated_images = {
-                os.path.join('/projects', project_name, 'images', os.path.basename(row[0]))
-                for row in cursor.fetchall()
-            }
-            
-            # Fetch preannotated_images: images with preannotations but not annotated or reviewed
             cursor.execute('''
                 SELECT i.absolute_path
                 FROM Images i
@@ -277,13 +323,41 @@ def annotation(project_name):
                 for row in cursor.fetchall()
             }
             
-            # Fetch annotator information for all images
+            for img in raw_images:
+                if len(img) < 2:
+                    logger.warning(f"Invalid image tuple in get_images(): {img}")
+                    continue
+                img_id = img[0]
+                abs_path = img[1]
+                filename = os.path.basename(abs_path)
+                url = os.path.join('/projects', project_name, 'images', filename)
+                
+                date = img[2] if len(img) > 2 else '2023-01-01'
+                
+                annotated = url in annotated_images
+                pre_anno = url in preannotated_images
+                
+                image_data.append({
+                    'id': img_id,
+                    'filename': filename,
+                    'url': url,
+                    'date': date, 
+                    'annotated': annotated,
+                    'preannotated': pre_anno
+                })
+            
             cursor.execute('''
                 SELECT i.absolute_path, r.user_id
                 FROM Images i
                 LEFT JOIN ReviewedImages r ON i.image_id = r.image_id
             ''')
-            for absolute_path, user_id in cursor.fetchall():
+            rows = cursor.fetchall()
+            image_annotators = {}
+            for row in rows:
+                if len(row) < 2:
+                    continue
+                absolute_path = row[0]
+                user_id = row[1]
                 image_url = os.path.join('/projects', project_name, 'images', os.path.basename(absolute_path))
                 if user_id:
                     user = get_user_by_id(user_id)
@@ -291,27 +365,38 @@ def annotation(project_name):
                 else:
                     image_annotators[image_url] = None
         
-        return render_template('annotation.html',
-                            project_name=project_name,
-                            images=image_urls,
-                            classes=class_list,
-                            setup_type=setup_type,
-                            annotated_images=annotated_images,
-                            preannotated_images=preannotated_images,
-                            image_annotators=image_annotators,
-                            current_user_avatar=f"{current_user.first_name[0]}.{current_user.last_name[0]}" if current_user.first_name and current_user.last_name else "")
+        tracker.log_substep('Project data loaded', details={'images_count': len(image_data), 'classes_count': len(class_list)})
+        tracker.log_step('Annotation interface loaded successfully', details={'project_name': project_name, 'setup_type': setup_type})
+        print(f"Annotation interface loaded for {project_name} ({len(image_data)} images)")
+        return templates.TemplateResponse('image_annotation.html',
+                            {"request": request,
+                            "project_name": project_name,
+                            "images": image_data,
+                            "classes": class_list,
+                            "setup_type": setup_type,
+                            "image_annotators": image_annotators,
+                            "user": current_user,
+                            "current_user_avatar": current_user.avatar})
     
     except Exception as e:
+        tracker.log_error(e, step='Annotation interface load')
         logger.error(f"Error in annotation route for {project_name}: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@bp.route('/get_annotations/<project_name>/<path:image_path>', methods=['GET'])
-@login_required
-def get_annotations(project_name, image_path):
+        print(f"Error loading annotation for {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Project not found or server error")
+    
+@router.get('/get_annotations/{project_name}/{image_path:path}')
+async def get_annotations(
+    project_name: str,
+    image_path: str,
+    request: Request, 
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    tracker.log_step('Fetching annotations', details={'project_name': project_name, 'image_path': image_path})
     try:
         project_path = os.path.join(PROJECTS_FOLDER, project_name)
         if not os.path.exists(project_path):
-            return jsonify({'success': False, 'error': 'Project not found'}), 404
+            raise ValueError('Project not found')
         
         project = Project(project_name, "", "", project_path)
         image_path = os.path.normpath(image_path)
@@ -345,73 +430,50 @@ def get_annotations(project_name, image_path):
                 else:
                     available_paths = [row[1] for row in all_images]
                     logger.warning(f"No image_id found for path: {absolute_image_path} or filename: {filename} in project {project_name}. Available paths: {available_paths}")
-                    return jsonify({'success': False, 'error': 'Image not found', 'available_paths': available_paths}), 404
+                    raise ValueError('Image not found')
             
             image_id = image_id[0]
-            
-            annotations = project.get_annotations(absolute_image_path)
-            
-            cursor.execute('''
-                SELECT preannotation_id, image_id, type, class_name, x, y, width, height, rotation, segmentation, confidence
-                FROM Preannotations WHERE image_id = ?
-            ''', (image_id,))
-            preannotations = []
-            for row in cursor.fetchall():
-                preanno = {
-                    'preannotation_id': row[0],
-                    'image_id': row[1],
-                    'type': 'obbox' if project.get_setup_type() == "Oriented Bounding Box" else row[2],
-                    'label': row[3],
-                    'confidence': float(row[10]) if row[10] is not None else 0.0
-                }
-                if row[4] is not None and row[5] is not None and row[6] is not None and row[7] is not None:
-                    preanno['x'] = float(row[4])
-                    preanno['y'] = float(row[5])
-                    preanno['width'] = float(row[6])
-                    preanno['height'] = float(row[7])
-                    preanno['bbox'] = [float(row[4]), float(row[5]), float(row[6]), float(row[7])]
-                if row[8] is not None:
-                    preanno['rotation'] = float(row[8])
-                else:
-                    preanno['rotation'] = 0.0
-                if row[9]:
-                    try:
-                        segmentation = json.loads(row[9])
-                        if isinstance(segmentation, list):
-                            preanno['segmentation'] = [segmentation]
-                            preanno['points'] = [{'x': float(segmentation[i]), 'y': float(segmentation[i+1])} for i in range(0, len(segmentation), 2)]
-                            preanno['closed'] = True
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.error(f"Error parsing segmentation for preannotation_id {row[0]}: {e}")
-                        preanno['segmentation'] = []
-                        preanno['points'] = []
-                preannotations.append(preanno)
             
             # Check if the image is reviewed
             cursor.execute('SELECT 1 FROM ReviewedImages WHERE image_id = ?', (image_id,))
             reviewed = cursor.fetchone() is not None
+
+        result = project.get_annotations(absolute_image_path)
+        annotations = result['annotations']
+        preannotations = result['preannotations']
         
+        tracker.log_substep('Annotations fetched', details={'annotations_count': len(annotations), 'preannotations_count': len(preannotations), 'reviewed': reviewed})
+        tracker.log_step('Annotations retrieval completed', details={'project_name': project_name, 'image': image_path})
         logger.info(f"Retrieved {len(annotations)} annotations and {len(preannotations)} preannotations for {absolute_image_path}, reviewed: {reviewed}")
-        return jsonify({
+        return {
             'success': True,
             'annotations': annotations,
             'preannotations': preannotations,
             'reviewed': reviewed
-        })
+        }
     except Exception as e:
+        tracker.log_error(e, step='Get annotations')
         logger.error(f"Error fetching annotations and preannotations: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Error fetching annotations for {image_path} in {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.route('/save_annotations', methods=['POST'])
-def save_annotations():
+@router.post('/save_annotations')
+async def save_annotations(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    data = await request.json()
+    tracker.log_step('Saving annotations', details={'project': data.get('project'), 'image': data.get('image'), 'annotations_count': len(data.get('annotations', [])) if data else 0})
     try:
-        data = request.json
         if not data or 'project' not in data or 'image' not in data or 'annotations' not in data:
-            return jsonify({'success': False, 'error': 'Invalid request data'}), 400
+            raise ValueError('Invalid request data')
 
         project_name = data['project']
         image_filename = data['image']  # expects just the filename, e.g., "image.jpg"
         raw_annotations = data['annotations']
+
+        print(f"Saving annotations for image {image_filename} in project {project_name} ({len(raw_annotations)} annotations)...")
 
         project_path = os.path.join(PROJECTS_FOLDER, project_name)
         project = Project(project_name, "", "", project_path)
@@ -453,11 +515,11 @@ def save_annotations():
                     image_id = cursor.fetchone()
                 else:
                     logger.error(f"Image file {absolute_image_path} not found on disk")
-                    return jsonify({'success': False, 'error': f'Image file {absolute_image_path} not found on disk'}), 404
+                    raise ValueError(f'Image file {absolute_image_path} not found on disk')
 
             if not image_id:
                 logger.error(f"No image entry found or created for {absolute_image_path}")
-                return jsonify({'success': False, 'error': 'Image not found or could not be added'}), 404
+                raise ValueError('Image not found or could not be added')
 
             image_id = image_id[0]
 
@@ -465,57 +527,67 @@ def save_annotations():
             cursor.execute('DELETE FROM Annotations WHERE image_id = ?', (image_id,))
             cursor.execute('DELETE FROM Preannotations WHERE image_id = ?', (image_id,))
 
-            for anno in raw_annotations:
-                anno_type = anno.get('type', 'rect')
-                if project.get_setup_type() == "Segmentation" and anno.get('segmentation'):
-                    anno_type = 'polygon'
-                elif project.get_setup_type() == "Oriented Bounding Box":
-                    anno_type = 'obbox'
+            saved_count = 0
+            # Progress bar for saving annotations
+            with tqdm(total=len(raw_annotations), desc=f"Saving annotations for {image_filename}", unit="anno", leave=False) as save_pbar:
+                for anno in raw_annotations:
+                    anno_type = anno.get('type', 'rect')
+                    if project.get_setup_type() == "Segmentation" and anno.get('segmentation'):
+                        anno_type = 'polygon'
+                    elif project.get_setup_type() == "Oriented Bounding Box":
+                        anno_type = 'obbox'
 
-                x = y = width = height = rotation = segmentation = None
-                if project.get_setup_type() in ("Bounding Box", "Oriented Bounding Box"):
-                    if anno.get('bbox'):
-                        try:
-                            x, y, width, height = map(float, anno['bbox'])
-                            if width <= 0 or height <= 0:
-                                logger.warning(f"Invalid bbox dimensions for {anno.get('category_name')} in {absolute_image_path}: width={width}, height={height}")
+                    x = y = width = height = rotation = segmentation = None
+                    if project.get_setup_type() in ("Bounding Box", "Oriented Bounding Box"):
+                        if anno.get('bbox'):
+                            try:
+                                x, y, width, height = map(float, anno['bbox'])
+                                if width <= 0 or height <= 0:
+                                    logger.warning(f"Invalid bbox dimensions for {anno.get('category_name')} in {absolute_image_path}: width={width}, height={height}")
+                                    save_pbar.update(1)
+                                    continue
+                                if project.get_setup_type() == "Oriented Bounding Box":
+                                    rotation = float(anno.get('rotation', 0))
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Invalid bbox format for {anno.get('category_name')} in {absolute_image_path}: {anno.get('bbox')}, error: {e}")
+                                save_pbar.update(1)
                                 continue
-                            if project.get_setup_type() == "Oriented Bounding Box":
-                                rotation = float(anno.get('rotation', 0))
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Invalid bbox format for {anno.get('category_name')} in {absolute_image_path}: {anno.get('bbox')}, error: {e}")
+                        else:
+                            logger.warning(f"No bbox provided for {anno.get('category_name')} in {absolute_image_path}: {anno}")
+                            save_pbar.update(1)
                             continue
-                    else:
-                        logger.warning(f"No bbox provided for {anno.get('category_name')} in {absolute_image_path}: {anno}")
-                        continue
-                elif project.get_setup_type() == "Segmentation" and anno.get('segmentation'):
-                    seg = anno['segmentation']
-                    if isinstance(seg, list) and seg:
-                        seg = seg[0] if isinstance(seg[0], list) else seg
-                        segmentation = json.dumps(seg)
-                    else:
-                        logger.warning(f"Skipping invalid segmentation for {anno.get('category_name')} in {absolute_image_path}")
+                    elif project.get_setup_type() == "Segmentation" and anno.get('segmentation'):
+                        seg = anno['segmentation']
+                        if isinstance(seg, list) and seg:
+                            seg = seg[0] if isinstance(seg[0], list) else seg
+                            segmentation = json.dumps(seg)
+                        else:
+                            logger.warning(f"Skipping invalid segmentation for {anno.get('category_name')} in {absolute_image_path}")
+                            save_pbar.update(1)
+                            continue
+
+                    if (project.get_setup_type() in ("Bounding Box", "Oriented Bounding Box") and (x is None or y is None or width is None or height is None)) or \
+                       (project.get_setup_type() == "Segmentation" and segmentation is None):
+                        logger.warning(f"Skipping invalid annotation for {anno.get('category_name')} in {absolute_image_path}: {anno}")
+                        save_pbar.update(1)
                         continue
 
-                if (project.get_setup_type() in ("Bounding Box", "Oriented Bounding Box") and (x is None or y is None or width is None or height is None)) or \
-                   (project.get_setup_type() == "Segmentation" and segmentation is None):
-                    logger.warning(f"Skipping invalid annotation for {anno.get('category_name')} in {absolute_image_path}: {anno}")
-                    continue
-
-                cursor.execute('''
-                    INSERT INTO Annotations (image_id, type, class_name, x, y, width, height, rotation, segmentation)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    image_id,
-                    anno_type,
-                    anno.get('category_name') or anno.get('label'),
-                    x,
-                    y,
-                    width,
-                    height,
-                    rotation,
-                    segmentation
-                ))
+                    cursor.execute('''
+                        INSERT INTO Annotations (image_id, type, class_name, x, y, width, height, rotation, segmentation)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        image_id,
+                        anno_type,
+                        anno.get('category_name') or anno.get('label'),
+                        x,
+                        y,
+                        width,
+                        height,
+                        rotation,
+                        segmentation
+                    ))
+                    saved_count += 1
+                    save_pbar.update(1)
 
             # Mark the image as reviewed
             cursor.execute('''
@@ -523,240 +595,615 @@ def save_annotations():
             ''', (image_id,))
 
             conn.commit()
-            logger.info(f"Saved {len(raw_annotations)} annotations for {absolute_image_path} and marked as reviewed")
+            logger.info(f"Saved {saved_count} annotations for {absolute_image_path} and marked as reviewed")
 
-        return jsonify({'success': True})
+        tracker.log_substep('Annotations saved', details={'saved_count': saved_count, 'image': image_filename, 'total_attempted': len(raw_annotations)})
+        tracker.log_step('Annotations save completed', details={'project': project_name, 'user_id': current_user.id})
+        print(f"Saved {saved_count}/{len(raw_annotations)} annotations for {image_filename} in {project_name}")
+        return {'success': True}
 
     except Exception as e:
+        tracker.log_error(e, step='Save annotations')
         logger.error(f"Error saving annotations: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Error saving annotations for {image_filename} in {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.route('/delete_images', methods=['POST'])
-@login_required
-def delete_images():
-    data = request.json
-    project_name = data.get('project')
-    image_urls = data.get('images', [])
-
-    if not project_name or not image_urls:
-        return jsonify({'success': False, 'error': 'Project name and image list are required'}), 400
-
-    project_path = os.path.join(PROJECTS_FOLDER, project_name)
-    db_path = os.path.join(project_path, 'config.db')
-
-    if not os.path.exists(db_path):
-        return jsonify({'success': False, 'error': 'Project database not found'}), 404
-
+@router.post('/delete_images')
+async def delete_images(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    data = await request.json()
+    tracker.log_step('Deleting images', details={'project': data.get('project'), 'image_count': len(data.get('images', []))})
     try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            deleted_count = 0
+        project_name = data.get('project')
+        image_urls = data.get('images', [])  # List of filenames/URLs
 
+        if not project_name or not image_urls:
+            raise ValueError('Project name and image list are required')
+
+        print(f"Deleting {len(image_urls)} images from project {project_name}...")
+
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
+
+        deleted_count = 0
+        # Progress bar for deletion
+        with tqdm(total=len(image_urls), desc=f"Deleting images from {project_name}", unit="img", leave=False) as del_pbar:
             for image_url in image_urls:
-                image_filename = os.path.basename(image_url)
-                absolute_image_path = os.path.join(PROJECTS_FOLDER, project_name, 'images', secure_filename(image_filename))
+                image_name = os.path.basename(image_url)  # Extract filename
+                remover = VFImageRemover(proj, image_name=image_name)
+                if remover.remove():
+                    deleted_count += 1
+                del_pbar.update(1)
 
-                if os.path.exists(absolute_image_path):
-                    os.remove(absolute_image_path)
-                else:
-                    logger.warning(f"Image file not found on disk: {absolute_image_path}")
-
-                cursor.execute('''
-                    DELETE FROM Annotations
-                    WHERE image_id IN (
-                        SELECT image_id FROM Images WHERE absolute_path = ?
-                    )
-                ''', (absolute_image_path,))
-
-                cursor.execute('DELETE FROM Images WHERE absolute_path = ?', (absolute_image_path,))
-                deleted_count += cursor.rowcount
-
-            conn.commit()
-
-        return jsonify({'success': True, 'deleted': deleted_count})
-
+        tracker.log_substep('Images deleted', details={'deleted_count': deleted_count, 'total_attempted': len(image_urls)})
+        tracker.log_step('Image deletion completed', details={'project': project_name})
+        logger.info(f"Deleted {deleted_count} images from {project_name}")
+        print(f"Deleted {deleted_count}/{len(image_urls)} images from {project_name}")
+        return {'success': True, 'deleted': deleted_count}
     except Exception as e:
-        logger.error(f"Error deleting images: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        tracker.log_error(e, step='Delete images')
+        logger.error(f"Error deleting images: {e}")
+        print(f"Error deleting images from {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.route('/download_images', methods=['POST'])
-@login_required
-def download_images():
-    data = request.get_json()
-    project_name = data.get('project')
-    filenames = data.get('images', [])
-    save_path = data.get('save_path')
+@router.post('/download_images')
+async def download_images(
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    data = await request.json()
+    tracker.log_step('Downloading images', details={'project': data.get('project'), 'image_count': len(data.get('images', []))})
+    try:
+        project_name = data.get('project')
+        filenames = data.get('images', [])  # List of filenames
+        save_path = data.get('save_path')  # For web: if provided, save locally; else stream
 
-    if not project_name or not filenames:
-        return jsonify({'success': False, 'error': 'Project name and image list are required'}), 400
+        if not project_name:
+            raise ValueError('Project name required')
 
-    project_path = os.path.join(PROJECTS_FOLDER, project_name)
-    images_path = os.path.join(project_path, 'images')
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
 
-    if not os.path.exists(images_path):
-        return jsonify({'success': False, 'error': 'Images directory not found'}), 404
+        print(f"Downloading {len(filenames or [])} images from {project_name}...")
 
-    mem_zip = BytesIO()
-    with zipfile.ZipFile(mem_zip, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
-        for filename in filenames:
-            safe_filename = os.path.basename(filename)
-            file_path = os.path.join(images_path, safe_filename)
-            if os.path.exists(file_path):
-                zf.write(file_path, arcname=safe_filename)
-            else:
-                logger.warning(f"File not found: {file_path}")
+        downloader = VFImageDownloader(proj, save_path or '/tmp', selected_images=filenames if filenames else None)
+        zip_path = downloader.download()
+        tracker.log_substep('Images downloaded', details={'zip_path': zip_path, 'image_count': len(filenames or [])})
+        tracker.log_step('Image download completed', details={'project': project_name})
+        print(f"Images downloaded to {zip_path}")
+        if save_path:
+            return {'success': True, 'saved_file': zip_path}
+        else:
+            # Stream for download
+            return FileResponse(
+                zip_path,
+                media_type='application/zip',
+                filename=f'{project_name}_images.zip'
+            )
+    except Exception as e:
+        tracker.log_error(e, step='Download images')
+        logger.error(f"Download failed: {e}")
+        print(f"Download failed for {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    if save_path:
-        os.makedirs(save_path, exist_ok=True)
-        zip_filename = f'{project_name}_images.zip'
-        zip_path = os.path.join(save_path, zip_filename)
-        with open(zip_path, 'wb') as f:
-            f.write(mem_zip.getvalue())
-        mem_zip.close()
-        return jsonify({'success': True, 'saved_file': zip_path})
-
-    mem_zip.seek(0)
-    return send_file(
-        mem_zip,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name=f'{project_name}_images.zip'
-    )
-
-@bp.route('/export/<project_name>', methods=['POST'])
-@login_required
-def export_annotations(project_name):
-    if request.is_json:
-        data = request.get_json()
-    else:
-        data_str = request.form.get('export_data')
+@router.post('/export/{project_name}')
+async def export_annotations(
+    project_name: str,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker  # Use request.app
+    try:
+        data = await request.json()
+    except:
+        form = await request.form()
+        data_str = form.get('export_data')
         if data_str:
             data = json.loads(data_str)
         else:
-            return jsonify({'success': False, 'error': 'No data provided'}), 400
+            raise HTTPException(status_code=400, detail='No data provided')
 
-    format_type = data.get('format')
-    selected_images = data.get('images', [])
-    split_choices = data.get('split_choices', ['train'])
-    split_ratios = data.get('split_ratios', {'train': 100, 'test': 0, 'val': 0})
-    save_path = data.get('save_path')
-
-
-    # Log incoming parameters
-    logger.info(f'Export request for project: {project_name}')
-    logger.info(f'Format type: {format_type}')
-    logger.info(f'Selected images: {selected_images}')
-    logger.info(f'Split choices: {split_choices}')
-    logger.info(f'Split ratios: {split_ratios}')
-
-    if not format_type:
-        return jsonify({'success': False, 'error': 'Format not specified'}), 400
-    project_path = os.path.join(PROJECTS_FOLDER, project_name)
-    if not os.path.exists(project_path):
-        return jsonify({'success': False, 'error': 'Project not found'}), 404
-    project = Project(project_name, "", "", project_path)
-    setup_type = project.get_setup_type()
-    if setup_type == "Oriented Bounding Box" and format_type not in ['CSV', 'YOLO']:
-        return jsonify({'success': False, 'error': 'Oriented Bounding Box can only be exported as CSV or YOLO'}), 400
-    elif setup_type == "Segmentation" and format_type not in ['COCO', 'YOLO']:
-        return jsonify({'success': False, 'error': 'Segmentation can only be exported as COCO or YOLO'}), 400
-
-    with sqlite3.connect(project.db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT DISTINCT i.absolute_path
-            FROM Images i
-            JOIN Annotations a ON i.image_id = a.image_id
-        ''')
-        annotated_images = [row[0] for row in cursor.fetchall()]
-        cursor.execute('SELECT description FROM Project_Configuration WHERE project_name = ?', (project_name,))
-        project_description = cursor.fetchone()[0] or ""
-
-    if not selected_images:
-        annotated_selected_images = annotated_images
-    else:
-        selected_basenames = [os.path.basename(img_path) for img_path in selected_images]
-        annotated_selected_images = [img for img in annotated_images if os.path.basename(img) in selected_basenames]
-
-    if not annotated_selected_images:
-        return jsonify({'success': False, 'error': 'No annotated images available'}), 400
-
-    # Filter out missing files
-    existing_images = [img for img in annotated_selected_images if os.path.exists(img)]
-    missing_count = len(annotated_selected_images) - len(existing_images)
-    if missing_count > 0:
-        logger.warning(f"{missing_count} images not found on disk and skipped during export for project {project_name}")
-
-    if not existing_images:
-        return jsonify({'success': False, 'error': 'No existing annotated images found on disk'}), 400
-
+    tracker.log_step('Exporting annotations', details={'project': project_name, 'format': data.get('format'), 'splits': data.get('split_choices')})
     try:
-        splits = split_images(existing_images, split_choices, split_ratios)
-        logger.info(f'Split images: {splits}')
-    except ValueError as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        format_type = data.get('format')
+        selected_images = data.get('images', [])  # Abs paths or filenames? Normalize to abs
+        split_choices = data.get('split_choices', ['train'])
+        split_ratios = data.get('split_ratios', {'train': 100})
+        save_path = data.get('save_path')
 
-    try:
-        if format_type == 'COCO':
-            export_data = generate_coco_export(
-                project,
-                splits,
-                setup_type,
-                project_name,
-                project_description
-            )
-        elif format_type == 'YOLO':
-            export_data = generate_yolo_export(
-                project,
-                splits,
-                setup_type,
-                project_name,
-                project_description
-            )
-        elif format_type == 'PASCAL_VOC':
-            export_data = generate_pascal_voc_export(
-                project,
-                splits,
-                setup_type
-            )
-        elif format_type == 'CSV':
-            export_data = generate_csv_export(
-                project,
-                splits,
-                setup_type
-            )
-        else:
-            return jsonify({'success': False, 'error': 'Invalid format specified'}), 400
+        if not format_type:
+            raise ValueError('Format not specified')
 
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
+
+        print(f"Exporting {project_name} in {format_type} format...")
+
+        # Normalize selected_images to abs paths if filenames
+        if selected_images and not os.path.isabs(selected_images[0]):
+            images_path = os.path.join(os.path.dirname(proj.db_path), 'images')
+            selected_images = [os.path.join(images_path, secure_filename(img)) for img in selected_images]
+
+        exporter = VFExporter(
+            project=proj,
+            path=save_path or '/tmp',
+            format=format_type,
+            selected_images=selected_images,
+            split_choices=split_choices,
+            split_ratios=split_ratios
+        )
+
+        zip_path = exporter.export()
+        tracker.log_substep('Export generated', details={'zip_path': zip_path, 'format': format_type, 'selected_images_count': len(selected_images or [])})
+        tracker.log_step('Annotations export completed', details={'project': project_name})
+        print(f"Export completed: {zip_path}")
         if save_path:
-            os.makedirs(save_path, exist_ok=True)
-            zip_filename = f'{project_name}_{format_type}.zip'
-            zip_path = os.path.join(save_path, zip_filename)
-            with open(zip_path, 'wb') as f:
-                f.write(export_data.getvalue())
-            return jsonify({'success': True, 'saved_file': zip_path})
+            return {'success': True, 'saved_file': zip_path}
+        else:
+            # Stream ZIP
+            return FileResponse(
+                zip_path,
+                media_type='application/zip',
+                filename=f'{project_name}_{format_type}.zip'
+            )
+    except Exception as e:
+        tracker.log_error(e, step='Export annotations')
+        logger.error(f'Export failed: {e}')
+        print(f"Export failed for {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@router.post('/delete_preannotations/{project_name}')
+async def delete_preannotations(
+    project_name: str,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    """Web endpoint for deleting preannotations (e.g., per image)."""
+    tracker = request.app.tracker  # Use request.app
+    data = await request.json()
+    tracker.log_step('Deleting preannotations', details={'project_name': project_name, 'image_path': data.get('image_path')})
+    try:
+        image_path = data.get('image_path')
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
+        print(f"Deleting preannotations from {project_name} {'(image: ' + image_path + ')' if image_path else 'all'}...")
+        deleted = proj.delete_preannotations(image_path)
+        tracker.log_substep('Preannotations deleted', details={'deleted_count': deleted})
+        tracker.log_step('Preannotations deletion completed')
+        print(f"Deleted {deleted} preannotations from {project_name}")
+        return {'success': True, 'deleted': deleted}
+    except Exception as e:
+        tracker.log_error(e, step='Delete preannotations')
+        logger.error(f"Error deleting preannotations: {e}")
+        print(f"Error deleting preannotations from {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-        return send_file(
-            export_data,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=f'{project_name}_{format_type}.zip'
+@router.post('/delete_annotations/{project_name}')
+async def delete_annotations(
+    project_name: str,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    """Web endpoint for deleting annotations (e.g., per image/user)."""
+    tracker = request.app.tracker  # Use request.app
+    data = await request.json()
+    tracker.log_step('Deleting annotations', details={'project_name': project_name, 'image_path': data.get('image_path')})
+    try:
+        image_path = data.get('image_path')
+        user_id = data.get('user_id', current_user.id)
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
+        print(f"Deleting annotations from {project_name} {'(image: ' + image_path + ')' if image_path else 'all'}...")
+        deleted = proj.delete_annotations(image_path, user_id)
+        tracker.log_substep('Annotations deleted', details={'deleted': deleted})
+        tracker.log_step('Annotations deletion completed')
+        print(f"Deleted annotations from {project_name}: {deleted}")
+        return {'success': True, 'deleted': deleted}
+    except Exception as e:
+        tracker.log_error(e, step='Delete annotations')
+        logger.error(f"Error deleting annotations: {e}")
+        print(f"Error deleting annotations from {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get('/get_frames/{project_name}/{video_id}')
+async def get_frames(
+    project_name: str,
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    tracker.log_step('Fetching frames', details={'project_name': project_name, 'video_id': video_id})
+    try:
+        project_path = os.path.join(PROJECTS_FOLDER, project_name)
+        if not os.path.exists(project_path):
+            raise HTTPException(status_code=404, detail='Project not found')
+
+        project = Project(project_name, "", "", project_path)
+        raw_frames = project.get_frames_for_video(video_id)
+        
+        # Fetch FPS from Videos table for timestamp calculation
+        with sqlite3.connect(project.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT fps FROM Videos WHERE video_id = ?', (video_id,))
+            fps_result = cursor.fetchone()
+            fps = fps_result[0] if fps_result else 30.0  # Fallback to 30 FPS if not found
+        
+        # Build response: frame_number, subsampled, and derived timestamp
+        frames = [
+            {
+                'frame_number': f[1],
+                'subsampled': bool(f[2]),
+                'timestamp': f[1] / fps
+            }
+            for f in raw_frames
+        ]
+
+        tracker.log_substep('Frames fetched', details={'frames_count': len(frames)})
+        tracker.log_step('Frames retrieval completed', details={'project_name': project_name, 'video_id': video_id})
+        logger.info(f"Retrieved {len(frames)} frames for video {video_id} in {project_name}")
+        return {'frames': frames, 'fps': fps}
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        tracker.log_error(e, step='Get frames')
+        logger.error(f"Error fetching frames: {e}")
+        print(f"Error fetching frames for video {video_id} in {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def _bbox_from_points(points):
+    """
+    Accepts either:
+      - flat list [x0,y0,x1,y1,...] OR
+      - list of pairs [[x,y], [x,y], ...]
+    Returns bbox [x,y,w,h] with ints, or None if invalid.
+    """
+    if not points:
+        return None
+    # detect flat list
+    if isinstance(points[0], (int, float)):
+        xs = points[0::2]
+        ys = points[1::2]
+    else:
+        # list of [x,y]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+    if not xs or not ys:
+        return None
+    x_min = int(min(xs))
+    y_min = int(min(ys))
+    x_max = int(max(xs))
+    y_max = int(max(ys))
+    w = max(1, int(x_max - x_min))
+    h = max(1, int(y_max - y_min))
+    return [x_min, y_min, w, h]
+
+
+def _expand_bbox_xywh(bbox, pad_px=0, img_w=None, img_h=None):
+    """
+    bbox: [x,y,w,h]
+    pad_px: pixels to expand on each side (int, >=0)
+    img_w/img_h: optional to clip
+    returns expanded bbox [x,y,w,h]
+    """
+    x, y, w, h = map(int, bbox)
+    x1 = x - pad_px
+    y1 = y - pad_px
+    x2 = x + w + pad_px
+    y2 = y + h + pad_px
+    if img_w is not None:
+        x1 = max(0, x1)
+        x2 = min(img_w - 1, x2)
+    if img_h is not None:
+        y1 = max(0, y1)
+        y2 = min(img_h - 1, y2)
+    w2 = max(1, x2 - x1)
+    h2 = max(1, y2 - y1)
+    return [float(x1), float(y1), float(w2), float(h2)]
+
+
+tracking_status = {}
+tracking_progress = {}
+tracking_results = {} 
+
+@router.post('/track_objects/{project_name}/{video_id}')
+async def track_objects(
+    project_name: str,
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker_app = request.app.tracker
+    data = await request.json()
+    print("Received data:", data)
+    print("Initial annotations (raw):", data.get('initial_annotations', []))
+    tracker_app.log_step('Starting object tracking', details={
+        'project_name': project_name, 'video_id': video_id,
+        'start_frame': data.get('start_frame'), 'end_frame': data.get('end_frame'),
+        'initial_annotations': len(data.get('initial_annotations', []))
+    })
+    try:
+        method = data.get('method', 'cv2')
+
+        # parse frame numbers safely
+        try:
+            start_frame = int(data.get('start_frame', 0) or 0)
+        except Exception:
+            start_frame = 0
+        try:
+            end_frame_raw = data.get('end_frame', None)
+            end_frame = int(end_frame_raw) if end_frame_raw is not None else None
+        except Exception:
+            end_frame = None
+
+        # Read incoming annotations BEFORE using them (this was the bug)
+        initial_annotations = data.get('initial_annotations', []) or []
+
+        # optional padding from frontend
+        bbox_padding_px = int(data.get('bbox_padding_px', 0) or 0)
+
+        # sanitize annotations -> bbox-only (xywh)
+        sanitized_annotations = []
+        for i, anno in enumerate(initial_annotations):
+            # If it's already a bbox (xywh), keep it
+            if 'bbox' in anno and isinstance(anno['bbox'], (list, tuple)) and len(anno['bbox']) == 4:
+                bbox = anno['bbox']
+            else:
+                # try segmentation -> bbox
+                if 'segmentation' in anno and anno['segmentation']:
+                    bbox = _bbox_from_points(anno['segmentation'])
+                # try points (list of [x,y]) -> bbox
+                elif 'points' in anno and anno['points']:
+                    bbox = _bbox_from_points(anno['points'])
+                else:
+                    bbox = None
+
+            if bbox is None:
+                print(f"Skipping invalid annotation {i}: {anno}")
+                continue
+
+            # optionally expand
+            if bbox_padding_px > 0:
+                # Note: img_w/h could be fetched from DB if needed, but assuming not clipped here
+                bbox = _expand_bbox_xywh(bbox, pad_px=bbox_padding_px)
+
+            # construct minimal annotation for the tracker (bbox, label, keyframe_frame)
+            sanitized = {
+                'bbox': bbox,
+                'label': anno.get('label', 'object'),
+            }
+            if 'keyframe_frame' in anno and anno['keyframe_frame'] is not None:
+                try:
+                    sanitized['keyframe_frame'] = int(anno['keyframe_frame'])
+                except Exception:
+                    sanitized['keyframe_frame'] = start_frame
+            sanitized_annotations.append(sanitized)
+
+        if len(sanitized_annotations) == 0:
+            raise ValueError('No valid initial annotations after sanitization')
+
+        # replace initial_annotations with sanitized list for tracking
+        initial_annotations = sanitized_annotations
+
+        tracker_type = data.get('tracker_type', 'csrt') if method == 'cv2' else None
+        use_keyframes = data.get('use_keyframes', False) if method == 'cv2' else True  # Default true for others
+        output_type = data.get('output_type', 'bbox') if method == 'sam2' else None
+        device = data.get('device', 'cpu') if method == 'sam2' else 'cpu'
+        sam_model = data.get('sam_model', 'sam2.1_t.pt') if method == 'sam2' else 'sam2.1_b.pt'
+
+        if end_frame is None or len(initial_annotations) == 0:
+            raise ValueError('End frame and at least one initial annotation required')
+
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
+
+        # Get video path from DB (assume method added to Project)
+        video_path = proj.get_video_path(video_id)
+
+        key = f"{project_name}_{video_id}_{start_frame}_{end_frame}_{method}"
+        if tracking_status.get(key) == 'running':
+            raise RuntimeError('Tracking is already running for this range')
+
+        print(f"VisioFirm is tracking objects in video {video_id} (project '{project_name}') from frame {start_frame} to {end_frame} using {method}...")
+
+        tracker = VFTracker(
+            project=proj,
+            video_path=video_path,
+            start_frame=start_frame,  # NEW: frame number
+            end_frame=end_frame,
+            initial_annotations=initial_annotations,
+            method=method,
+            tracker_type=tracker_type,
+            use_keyframes=use_keyframes,
+            output_type=output_type,
+            sam_model=sam_model,
+            device=device
+        )
+
+        tracking_status[key] = 'running'
+        tracking_progress[key] = 0
+
+        def callback(status_dict):
+            tracking_status[key] = status_dict['status']
+            progress = status_dict.get('progress', 0)
+            tracking_progress[key] = progress
+            if status_dict['status'] == 'completed':
+                tracker.push_to_db()
+                tracking_results[key] = status_dict['results']
+            tracker_app.log_substep('Tracking progress update', details=status_dict)
+
+        tracker.run_threaded(callback=callback)
+        tracker_app.log_step('Tracking started successfully', details={'key': key, 'method': method})
+        return {'success': True, 'message': 'Tracking started', 'key': key}
+
+    except Exception as e:
+        tracker_app.log_error(e, step='Object tracking')
+        logger.error(f"Error in track_objects: {e}")
+        print(f"Tracking failed for '{project_name}' video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/check_tracking_status")
+def check_tracking_status(key: str):
+    status = tracking_status.get(key, 'not_started')
+    progress = tracking_progress.get(key, 0)
+    results = tracking_results.get(key) if status == 'completed' else None
+    return {'status': status, 'progress': progress, 'results': results}
+
+@router.get("/get_video_annotations/{project_name}/{video_id}")
+def get_video_annotations(project_name: str, video_id: int):
+    proj = VFProjects.get_project(project_name)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return proj.get_video_annotations(video_id)
+
+@router.post('/delete_segment_annotations/{project_name}/{video_id}')
+async def delete_segment_annotations(
+    project_name: str,
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    tracker.log_step('Deleting segment annotations', details={'project_name': project_name, 'video_id': video_id})
+    try:
+        data = await request.json()
+        start_frame = data.get('start_frame')
+        end_frame = data.get('end_frame')
+        if start_frame is None or end_frame is None:
+            raise HTTPException(status_code=400, detail='start_frame and end_frame are required')
+
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        result = proj.delete_annotations(video_id=video_id, start_frame=start_frame, end_frame=end_frame)
+        tracker.log_substep('Segment annotations deleted', details=result)
+        tracker.log_step('Segment annotations deletion completed', details={'project_name': project_name, 'video_id': video_id})
+        logger.info(f"Deleted segment annotations for video {video_id} in {project_name}: frames {start_frame}-{end_frame}")
+        return {'success': True, 'deleted': result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        tracker.log_error(e, step='Delete segment annotations')
+        logger.error(f"Error deleting segment annotations: {e}")
+        print(f"Error deleting segment annotations for video {video_id} in {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post('/delete_segment_preannotations/{project_name}/{video_id}')
+async def delete_segment_preannotations(
+    project_name: str,
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    tracker.log_step('Deleting segment preannotations', details={'project_name': project_name, 'video_id': video_id})
+    try:
+        data = await request.json()
+        start_frame = data.get('start_frame')
+        end_frame = data.get('end_frame')
+        if start_frame is None or end_frame is None:
+            raise HTTPException(status_code=400, detail='start_frame and end_frame are required')
+
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        deleted = proj.delete_preannotations(video_id=video_id, start_frame=start_frame, end_frame=end_frame)
+        tracker.log_substep('Segment preannotations deleted', details={'deleted': deleted})
+        tracker.log_step('Segment preannotations deletion completed', details={'project_name': project_name, 'video_id': video_id})
+        logger.info(f"Deleted {deleted} segment preannotations for video {video_id} in {project_name}: frames {start_frame}-{end_frame}")
+        return {'success': True, 'deleted': deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        tracker.log_error(e, step='Delete segment preannotations')
+        logger.error(f"Error deleting segment preannotations: {e}")
+        print(f"Error deleting segment preannotations for video {video_id} in {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post('/commit_video_preannotations/{project_name}/{video_id}')
+async def commit_video_preannotations(
+    project_name: str,
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    tracker.log_step('Committing video preannotations', details={'project_name': project_name, 'video_id': video_id})
+    try:
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise ValueError('Project not found')
+        result = proj.commit_preannotations_for_video(video_id, current_user.id)
+        if result['success']:
+            tracker.log_substep('Preannotations committed', details=result)
+            tracker.log_step('Video preannotations commit completed')
+            print(f"Committed preannotations for video {video_id} in {project_name}")
+            return result
+        else:
+            raise ValueError(result['error'])
+    except Exception as e:
+        tracker.log_error(e, step='Commit video preannotations')
+        logger.error(f"Error committing video preannotations: {e}")
+        print(f"Error committing preannotations for video {video_id} in {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/export/{project_name}")
+async def export_annotations(
+    project_name: str,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker_app = request.app.tracker
+    data = await request.json()
+    format = data.get('format')
+    videos = data.get('videos') or []  # List of video paths for video export; default to empty list
+    extract_frames = data.get('extract_frames', False)
+    semantic = data.get('semantic', False)
+    export_path = data.get('export_path', '/tmp')  # Temp path for ZIP generation
+
+    try:
+        proj = VFProjects.get_project(project_name)
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        is_video_project = proj.get_setup_type().startswith('Video ')
+        if is_video_project and not videos:
+            all_videos = proj.get_videos()
+            if all_videos:
+                videos = [v[1] for v in all_videos]  # Extract absolute_path (index 1)
+            else:
+                raise ValueError("No videos found in project")
+
+        exporter = VFExporter(
+            project=proj,
+            path=export_path,
+            format=format,
+            videos=videos,
+            extract_frames=extract_frames,
+            semantic=semantic
+        )
+        zip_path = exporter.export()
+
+        return FileResponse(
+            path=zip_path,
+            media_type='application/zip',
+            filename=os.path.basename(zip_path),
+            headers={"Content-Disposition": f"attachment; filename={os.path.basename(zip_path)}"}
         )
     except Exception as e:
-        logger.error(f'Error during export generation: {e}')
-        return jsonify({'success': False, 'error': f'Export failed: {str(e)}'}), 500
-
-    
-@bp.route('/check_gpu', methods=['GET'])
-def check_gpu():
-    try:
-        import torch
-        has_gpu = torch.cuda.is_available()
-        logger.info(f"GPU check: {'Available' if has_gpu else 'Not available'}")
-        return jsonify({'success': True, 'has_gpu': has_gpu})
-    except ImportError as e:
-        logger.error(f"Failed to import torch: {e}")
-        return jsonify({'success': False, 'has_gpu': False, 'error': 'PyTorch not installed'}), 500
-    except Exception as e:
-        logger.error(f"Error checking GPU: {e}")
-        return jsonify({'success': False, 'has_gpu': False, 'error': str(e)}), 500
+        tracker_app.log_error(e, step='Export annotations')
+        logger.error(f"Export failed for {project_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
