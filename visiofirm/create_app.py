@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -12,13 +13,28 @@ from visiofirm.security import SECRET_KEY
 
 app_instance = None
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    yield
+
 def create_app():
     global app_instance
     if app_instance is None:
-        app_instance = FastAPI(title="VisioFirm", description="Fast AI-powered image annotation tool")
+        app_instance = FastAPI(
+            title="VisioFirm",
+            description="Fast AI-powered image annotation tool",
+            lifespan=lifespan
+        )
         
-        templates = Jinja2Templates(directory="visiofirm/templates")
-        app_instance.mount("/static", StaticFiles(directory="visiofirm/static"), name="static")
+        # Compute paths relative to this module's directory
+        module_dir = os.path.dirname(__file__)
+        templates_dir = os.path.join(module_dir, "templates")
+        static_dir = os.path.join(module_dir, "static")
+        
+        templates = Jinja2Templates(directory=templates_dir)
+        app_instance.mount("/static", StaticFiles(directory=static_dir), name="static")
         
         # Config
         app_instance.state.max_content_length = 20 * 1024 * 1024  # 20MB limit 
@@ -26,11 +42,6 @@ def create_app():
         
         # Ensure folders
         os.makedirs(PROJECTS_FOLDER, exist_ok=True)
-        
-        # Startup: Init DB
-        @app_instance.on_event("startup")
-        async def startup_event():
-            init_db()
         
         # Include routers (auth first; dashboard next; annotation last)
         app_instance.include_router(auth_router)
