@@ -8,9 +8,12 @@ from visiofirm.models.user import init_db
 from visiofirm.routes.auth import router as auth_router
 from visiofirm.routes.dashboard import router as dashboard_router
 from visiofirm.routes.annotation import router as annotation_router
+from visiofirm.routes.importer import router as import_router
 import os
 from visiofirm.security import SECRET_KEY
+
 app_instance = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -44,6 +47,7 @@ def create_app():
         # Include routers (auth first; dashboard next; annotation last)
         app_instance.include_router(auth_router)
         app_instance.include_router(dashboard_router)
+        app_instance.include_router(import_router)
         app_instance.include_router(annotation_router)
        
         # Serve project files
