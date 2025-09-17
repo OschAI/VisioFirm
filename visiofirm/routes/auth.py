@@ -8,7 +8,9 @@ from typing import Optional
 import os
 
 router = APIRouter(prefix="/auth")
-templates = Jinja2Templates(directory="visiofirm/templates")  # Updated path
+module_dir = os.path.dirname(__file__)
+templates_dir = os.path.join(module_dir, "..", "templates")
+templates = Jinja2Templates(directory=templates_dir)
 
 @router.get("/login", response_class=HTMLResponse, name="auth.login")
 async def login_get(request: Request):
