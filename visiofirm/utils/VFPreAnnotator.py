@@ -9,29 +9,16 @@ import logging
 import networkx as nx
 import clip
 import os
-import requests
+import gc
+from tqdm import tqdm
 from groundingdino.util.inference import load_model, predict
 from groundingdino.datasets import transforms as T
 from visiofirm.config import WEIGHTS_FOLDER
+from visiofirm.utils.downloader import get_or_download_model
 
 os.makedirs(WEIGHTS_FOLDER, exist_ok=True)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-def download_weight(url, filename):
-    path = os.path.join(WEIGHTS_FOLDER, filename)
-    if not os.path.exists(path):
-        logger.info(f"Downloading {filename} from {url}")
-        r = requests.get(url, stream=True)
-        if r.status_code == 200:
-            with open(path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        else:
-            raise ValueError(f"Failed to download {url}")
-    return path
-
 
 class ImageProcessor:
     def __init__(
@@ -56,49 +43,36 @@ class ImageProcessor:
         self.segmentation_min_area = segmentation_min_area
         self.sam2_autocast_dtype = sam2_autocast_dtype
         self.verbose = verbose
+        self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=self.device)
 
-        # Known model URLs for auto-download
-        known_yolo_urls = {
-            "yolov10n.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10n.pt",
-            "yolov10s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10s.pt",
-            "yolov10m.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10m.pt",
-            "yolov10l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10l.pt",
-            "yolov10x.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10x.pt",
-        }
-        known_sam_urls = {
-            "sam2.1_t.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_t.pt",
-        }
+        if self.model_type == "clip":
+            # Skip loading YOLO/DINO/SAM for classification
+            return
 
-        # Download YOLO if known
         if self.model_type == "yolo":
-            if self.yolo_model_path in known_yolo_urls:
-                self.yolo_model_path = download_weight(known_yolo_urls[self.yolo_model_path], self.yolo_model_path)
-            if any(keyword in self.yolo_model_path.lower() for keyword in ['yolo5', 'yolov5', 'y5', 'v5']):
-                self.yolo_model = torch.hub.load('ultralytics/yolov5', 'custom', path=self.yolo_model_path)
-            else:
-                self.yolo_model = YOLO(model=self.yolo_model_path)
+            self.yolo_model_path = get_or_download_model(self.yolo_model_path)
+            self.yolo_model = YOLO(model=self.yolo_model_path)
         elif self.model_type in ["grounding_dino_tiny", "grounding_dino_base"]:
             if self.model_type == "grounding_dino_tiny":
                 config_path = os.path.join(os.path.dirname(__file__), 'GroundingDinoConfigs', 'GroundingDINO_SwinT_OGC.py')
-                weight_url = "https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth"
                 weight_filename = "groundingdino_swint_ogc.pth"
             else:  # grounding_dino_base
                 config_path = os.path.join(os.path.dirname(__file__), 'GroundingDinoConfigs', 'GroundingDINO_SwinB_cfg.py')
-                weight_url = "https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha2/groundingdino_swinb_cogcoor.pth"
                 weight_filename = "groundingdino_swinb_cogcoor.pth"
-            weight_path = download_weight(weight_url, weight_filename)
+            weight_path = get_or_download_model(weight_filename)
             self.dino_model = load_model(config_path, weight_path)
             self.dino_model = self.dino_model.to(self.device)
         else:
             raise ValueError(f"Invalid model_type: {model_type}. Choose 'yolo', 'grounding_dino_tiny', or 'grounding_dino_base'.")
 
-        # Download SAM if known
-        if self.sam2_model_path in known_sam_urls:
-            self.sam2_model_path = download_weight(known_sam_urls[self.sam2_model_path], self.sam2_model_path)
+        # Download and load SAM
+        self.sam2_model_path = get_or_download_model(self.sam2_model_path)
         self.sam2_model = SAM(self.sam2_model_path)
         if self.verbose:
             self.sam2_model.info()
 
+        # Load CLIP (moved outside the if, as it's always loaded)
+        self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=self.device)
     @staticmethod
     def _parse_classes(classes_str: str):
         raw_classes = [c.strip() for c in classes_str.replace(';', ',').split(',') if c.strip()]
@@ -106,7 +80,6 @@ class ImageProcessor:
         clean_classes = [c for c in clean_classes if c]
         prompts = [f"{'an' if c[0].lower() in 'aeiou' else 'a'} {c}" for c in clean_classes]
         return prompts, clean_classes
-
     def _run_grounding_dino(self, image, class_list, box_threshold, text_threshold):
         batch_size = 10
         all_boxes = []
@@ -165,7 +138,6 @@ class ImageProcessor:
             "scores": combined_scores,
             "labels": combined_labels
         }
-
     def _run_yolo(self, image, class_list, conf_threshold):
         clean_class_set = {c.replace("a ", "").replace("an ", "").strip().lower() for c in class_list}
         class_mapping = {}
@@ -177,55 +149,84 @@ class ImageProcessor:
             boxes = []
             scores = []
             labels = []
-            for box in results.xyxy[0]:
+            kept_idx = []
+            for idx, box in enumerate(results.xyxy[0]):
                 x1, y1, x2, y2, conf, cls = box
                 if conf >= conf_threshold:
-                    class_name = results.names[int(cls)]
+                    icls = int(cls)
+                    if 0 <= icls < len(results.names):
+                        class_name = results.names[icls]
+                        if class_name.lower() in clean_class_set:
+                            user_class_name = class_mapping.get(class_name.lower(), class_name)
+                            boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
+                            scores.append(conf.item())
+                            labels.append(user_class_name)
+                            kept_idx.append(idx)
+                    else:
+                        continue
+            masks = None # TODO: Add masks support for YOLOv5 if needed
+        else:
+            results = self.yolo_model.predict(image, conf=conf_threshold, verbose=self.verbose, retina_masks=True)
+            boxes = []
+            scores = []
+            labels = []
+            kept_idx = []
+            for idx, box in enumerate(results[0].boxes):
+                x1, y1, x2, y2 = box.xyxy[0]
+                conf = box.conf[0]
+                cls = box.cls[0]
+                icls = int(cls)
+                if icls in results[0].names:
+                    class_name = results[0].names[icls]
                     if class_name.lower() in clean_class_set:
                         user_class_name = class_mapping.get(class_name.lower(), class_name)
                         boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
                         scores.append(conf.item())
                         labels.append(user_class_name)
-        else:
-            results = self.yolo_model.predict(image, conf=conf_threshold)
-            boxes = []
-            scores = []
-            labels = []
-            for box in results[0].boxes:
-                x1, y1, x2, y2 = box.xyxy[0]
-                conf = box.conf[0]
-                cls = box.cls[0]
-                class_name = results[0].names[int(cls)]
-                if class_name.lower() in clean_class_set:
-                    user_class_name = class_mapping.get(class_name.lower(), class_name)
-                    boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
-                    scores.append(conf.item())
-                    labels.append(user_class_name)
+                        kept_idx.append(idx)
+                else:
+                    continue
+            masks = results[0].masks.data.cpu().numpy().astype(np.float32) if results[0].masks is not None else None
+            if masks is not None and len(kept_idx) > 0:
+                masks = masks[kept_idx]
         return {
             "boxes": np.array(boxes, dtype=np.float32),
             "scores": np.array(scores, dtype=np.float32),
-            "labels": labels
+            "labels": labels,
+            "masks": masks
         }
-
     def _run_sam2(self, image: Image.Image, boxes: np.ndarray) -> np.ndarray:
         if boxes.size == 0:
             return np.zeros((0, image.size[1], image.size[0]), dtype=np.float32)
         multi_bboxes = [[int(x1), int(y1), int(x2), int(y2)] for x1, y1, x2, y2 in boxes]
-       
+      
         with torch.inference_mode(), torch.autocast(self.device_str, dtype=self.sam2_autocast_dtype):
-            results = self.sam2_model.predict(image, bboxes=multi_bboxes, device=self.device)
-           
+            results = self.sam2_model.predict(image, bboxes=multi_bboxes, device=self.device, verbose=self.verbose)
+          
             if not results:
                 return np.zeros((0, image.size[1], image.size[0]), dtype=np.float32)
-           
+          
             res = results[0]
             if res.masks is not None and len(res.masks.data) > 0:
                 masks = res.masks.data.cpu().numpy().astype(np.float32)
             else:
                 masks = np.zeros((len(multi_bboxes), image.size[1], image.size[0]), dtype=np.float32)
-       
+      
         return masks
-
+    
+    def get_best_label(self, image, candidate_labels):
+        if self.clip_model is None or self.clip_preprocess is None:
+            raise ValueError("CLIP model is not loaded; required for label verification.")
+        prompts = [f"a photo of a {l}" for l in candidate_labels]
+        image_input = self.clip_preprocess(image).unsqueeze(0).to(self.device)
+        text_inputs = clip.tokenize(prompts).to(self.device)
+        with torch.no_grad():
+            image_features = self.clip_model.encode_image(image_input)
+            text_features = self.clip_model.encode_text(text_inputs)
+            similarities = (image_features @ text_features.T).softmax(dim=-1)[0]
+        best_label_idx = similarities.argmax().item()
+        return candidate_labels[best_label_idx], similarities[best_label_idx].item()
+    
     def process_image(
         self,
         image: Image.Image,
@@ -239,10 +240,16 @@ class ImageProcessor:
         prompts, clean_labels = self._parse_classes(classes_str)
         if not prompts:
             raise ValueError("No valid class prompts found.")
+        if mode == "Classification":
+            prompts, clean_labels = self._parse_classes(classes_str)
+            label, score = self.get_best_label(image, clean_labels)
+            return {"labels": [label], "scores": [score]}
         if self.model_type in ["grounding_dino_tiny", "grounding_dino_base"]:
             result = self._run_grounding_dino(image, prompts, box_threshold, text_threshold)
+            masks = None
         else:
             result = self._run_yolo(image, prompts, box_threshold)
+            masks = result.get("masks", None)
         if isinstance(result["boxes"], torch.Tensor):
             result["boxes"] = result["boxes"].cpu().numpy()
         if isinstance(result["scores"], torch.Tensor):
@@ -250,18 +257,55 @@ class ImageProcessor:
         boxes = result["boxes"]
         scores = result["scores"]
         labels = result["labels"]
-        if mode == "BoundingBox":
+        if self.model_type == "yolo":
+            is_seg_model = masks is not None
+            if mode == "Segmentation":
+                if not is_seg_model:
+                    masks = self._run_sam2(image, boxes)
+            elif mode in ["BoundingBox", "OrientedBoundingBox"]:
+                if is_seg_model:
+                    valid_idx = []
+                    new_boxes = []
+                    for idx, mask in enumerate(masks):
+                        mask_uint8 = (mask > 0).astype(np.uint8)
+                        x, y, w, h = cv2.boundingRect(mask_uint8)
+                        if w > 0 and h > 0:
+                            valid_idx.append(idx)
+                            new_boxes.append([x, y, x + w, y + h])
+                    if valid_idx:
+                        boxes = np.array(new_boxes, dtype=np.float32)
+                        scores = scores[valid_idx]
+                        labels = [labels[j] for j in valid_idx]
+                masks = None
+        if masks is not None:
+            valid = []
+            new_boxes = []
+            new_masks = [] if mode == "Segmentation" else None
+            for i, mask in enumerate(masks):
+                mask_uint8 = (mask > 0).astype(np.uint8)
+                x, y, w, h = cv2.boundingRect(mask_uint8)
+                if w > 0 and h > 0:
+                    valid.append(i)
+                    new_boxes.append([x, y, x + w, y + h])
+                    if mode == "Segmentation":
+                        new_masks.append(mask)
+            if valid:
+                boxes = np.array(new_boxes, dtype=np.float32)
+                scores = scores[valid]
+                labels = [labels[i] for i in valid]
+                if mode == "Segmentation":
+                    masks = np.array(new_masks)
+        if mode in ["BoundingBox", "OrientedBoundingBox"]:
             return {"boxes": boxes, "scores": scores, "labels": labels}
         elif mode == "Segmentation":
-            masks = self._run_sam2(image, boxes)
+            if masks is None:
+                masks = self._run_sam2(image, boxes)
             return {"boxes": boxes, "scores": scores, "labels": labels, "masks": masks}
         else:
-            raise ValueError(f"Invalid mode: {mode}. Choose 'BoundingBox' or 'Segmentation'.")
-
+            raise ValueError(f"Invalid mode: {mode}. Choose 'BoundingBox', 'OrientedBoundingBox', 'Segmentation', or 'Classification'.")
     def __call__(self, *args, **kwargs):
         return self.process_image(*args, **kwargs)
-
-
+    
 class PreAnnotator:
     def __init__(
         self,
@@ -272,21 +316,23 @@ class PreAnnotator:
         config_db_path: str = "config.db",
         box_threshold: float = 0.2,
         verbose: bool = False,
+        progress_callback=None, # Callback for progress updates (float progress)
     ):
         # Validate model type
-        valid_models = ["yolo", "grounding_dino_tiny", "grounding_dino_base"]
+        valid_models = ["yolo", "grounding_dino_tiny", "grounding_dino_base", "clip"]
         if model_type not in valid_models:
             raise ValueError(f"Invalid model_type: {model_type}. Choose from {valid_models}.")
-       
+      
         self.model_type = model_type
         self.device = device
         self.config_db_path = config_db_path
         self.box_threshold = box_threshold
         self.verbose = verbose
+        self.progress_callback = progress_callback
         # Database connection
         self.conn = sqlite3.connect(self.config_db_path)
         cursor = self.conn.cursor()
-       
+      
         # Verify database structure
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Project_Configuration'")
         if not cursor.fetchone():
@@ -296,20 +342,23 @@ class PreAnnotator:
         if not result:
             raise ValueError("No setup type found in Project_Configuration table.")
         self.setup_type = result[0]
-       
+        
+        if self.setup_type == "Classification":
+            self.model_type = "clip"
+      
         # Load classes
         cursor.execute("SELECT class_name FROM Classes")
         self.classes = [str(row[0]) for row in cursor.fetchall()]
         if not self.classes:
             logger.warning("No classes found in Classes table. May lead to empty detections.")
         self.classes_str = ", ".join(self.classes)
-       
+      
         # Load images
         cursor.execute("SELECT image_id, absolute_path FROM Images")
         self.images = cursor.fetchall()
         if not self.images:
             raise ValueError("No images found in Images table.")
-       
+      
         # Initialize image processor
         self.image_processor = ImageProcessor(
             model_type=self.model_type,
@@ -319,13 +368,6 @@ class PreAnnotator:
             box_threshold=self.box_threshold,
             verbose=self.verbose
         )
-        # Load CLIP model for YOLO
-        if self.model_type == "yolo":
-            self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=self.device)
-        else:
-            self.clip_model = None
-            self.clip_preprocess = None
-
     def _simplify_contour(self, contour, epsilon_factor=0.002):
         min_points_for_simplification = 15
         if len(contour) < 3:
@@ -343,7 +385,6 @@ class PreAnnotator:
         else:
             logger.debug(f"Simplification resulted in fewer than 3 points; using original contour with {len(contour)} points")
             return flattened_original
-
     @staticmethod
     def compute_iou(box1, box2):
         x1 = max(box1[0], box2[0])
@@ -355,173 +396,230 @@ class PreAnnotator:
         area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
         union = area1 + area2 - intersection
         return intersection / union if union > 0 else 0
-
-    def get_best_label(self, cropped_image, candidate_labels):
-        if self.clip_model is None or self.clip_preprocess is None:
-            raise ValueError("CLIP model is not loaded; required for label verification.")
-        image_input = self.clip_preprocess(cropped_image).unsqueeze(0).to(self.device)
-        text_inputs = clip.tokenize(candidate_labels).to(self.device)
-        with torch.no_grad():
-            image_features = self.clip_model.encode_image(image_input)
-            text_features = self.clip_model.encode_text(text_inputs)
-            similarities = (image_features @ text_features.T).softmax(dim=-1)
-        best_label_idx = similarities.argmax().item()
-        return candidate_labels[best_label_idx]
-
     def run_inferences(self):
         # Map setup type to mode
         setup_to_mode = {
             "Bounding Box": "BoundingBox",
             "Segmentation": "Segmentation",
-            "Oriented Bounding Box": "BoundingBox"
+            "Oriented Bounding Box": "BoundingBox",
+            "Classification": "Classification"
         }
         mode = setup_to_mode.get(self.setup_type, "BoundingBox")
         cursor = self.conn.cursor()
-        for image_id, image_path in self.images:
-            try:
-                # Skip if already annotated
-                cursor.execute("""
-                    SELECT EXISTS(
-                        SELECT 1 FROM Preannotations WHERE image_id = ?
-                    ) OR EXISTS(
-                        SELECT 1 FROM Annotations WHERE image_id = ?
+        total_images = len(self.images)
+        processed = 0
+        skipped = 0
+        # tqdm progress bar for visual terminal updates
+        with tqdm(total=total_images, desc=f"Pre-annotating {self.model_type.upper()}", unit="img") as pbar:
+            for image_id, image_path in self.images:
+                try:
+                    # Skip if already annotated
+                    cursor.execute("""
+                        SELECT EXISTS(
+                            SELECT 1 FROM Preannotations WHERE image_id = ?
+                        ) OR EXISTS(
+                            SELECT 1 FROM Annotations WHERE image_id = ?
+                        )
+                    """, (image_id, image_id))
+                    if cursor.fetchone()[0]:
+                        logger.info(f"Skipping image {image_path} (image_id: {image_id}) as it already has preannotations or annotations.")
+                        skipped += 1
+                        current_progress = ((processed + skipped) / total_images) * 100
+                        pbar.update(1)
+                        pbar.set_postfix({
+                            'processed': processed,
+                            'skipped': skipped,
+                            'progress': f"{current_progress:.1f}%"
+                        })
+                        if self.progress_callback:
+                            self.progress_callback(current_progress)
+                        continue
+                    logger.info(f"Processing image: {image_path} (image_id: {image_id})")
+                    image = Image.open(image_path).convert("RGB")
+                  
+                    # Process image
+                    results = self.image_processor.process_image(
+                        image=image,
+                        classes_str=self.classes_str,
+                        mode=mode,
+                        box_threshold=self.box_threshold
                     )
-                """, (image_id, image_id))
-                if cursor.fetchone()[0]:
-                    logger.info(f"Skipping image {image_path} (image_id: {image_id}) as it already has preannotations or annotations.")
-                    continue
-                logger.info(f"Processing image: {image_path} (image_id: {image_id})")
-                image = Image.open(image_path).convert("RGB")
-               
-                # Process image
-                results = self.image_processor.process_image(
-                    image=image,
-                    classes_str=self.classes_str,
-                    mode=mode,
-                    box_threshold=self.box_threshold
-                )
-                num_detections = len(results["scores"])
-                logger.info(f"Detected {num_detections} objects for image {image_path}")
-                # Map labels to original class names
-                class_lower_to_original = {cls.lower(): cls for cls in self.classes}
-                mapped_labels = []
-                for label in results["labels"]:
-                    label_lower = label.lower()
-                    mapped_labels.append(class_lower_to_original.get(label_lower, label))
-                    if label_lower not in class_lower_to_original:
-                        logger.warning(f"No matching class found for label '{label}' in {image_path}; using original label")
-                results["labels"] = mapped_labels
-                # Post-process annotations
-                if mode in ["BoundingBox", "Segmentation"]:
-                    boxes = results["boxes"]
-                    scores = results["scores"]
-                    labels = results["labels"]
-                    masks = results.get("masks", [None] * len(boxes))
-                    annotations = [
-                        {"box": boxes[i], "score": scores[i], "label": labels[i], "mask": masks[i]}
-                        for i in range(len(boxes))
-                    ]
-                    if self.model_type == "yolo":
-                        # Cluster overlapping annotations
-                        G = nx.Graph()
-                        for i in range(len(annotations)):
-                            for j in range(i + 1, len(annotations)):
-                                if self.compute_iou(annotations[i]["box"], annotations[j]["box"]) > 0.9:
-                                    G.add_edge(i, j)
-                        clusters = list(nx.connected_components(G))
-                        # Include singletons
-                        all_indices = set(range(len(annotations)))
-                        cluster_indices = set.union(*clusters) if clusters else set()
-                        singletons = all_indices - cluster_indices
-                        clusters.extend([{i} for i in singletons])
-                        # Process clusters
-                        kept_annotations = []
-                        for cluster in clusters:
-                            cluster_annotations = [annotations[i] for i in cluster]
-                            if len(cluster) == 1:
-                                kept_annotations.append(cluster_annotations[0])
-                            else:
-                                unique_labels = list(set(anno["label"] for anno in cluster_annotations))
-                                if len(unique_labels) == 1:
-                                    best_anno = max(cluster_annotations, key=lambda x: x["score"])
+                    num_detections = len(results["scores"]) if "scores" in results else len(results.get("labels", []))
+                    #logger.info(f"Detected {num_detections} objects for image {image_path}")
+                    # Map labels to original class names
+                    class_lower_to_original = {cls.lower(): cls for cls in self.classes}
+                    mapped_labels = []
+                    for label in results["labels"]:
+                        label_lower = label.lower()
+                        mapped_labels.append(class_lower_to_original.get(label_lower, label))
+                        if label_lower not in class_lower_to_original:
+                            logger.warning(f"No matching class found for label '{label}' in {image_path}; using original label")
+                    results["labels"] = mapped_labels
+                    # Post-process annotations
+                    if mode == "Classification":
+                        if num_detections > 0:
+                            label = results["labels"][0]
+                            score = results["scores"][0]
+                            cursor.execute(
+                                "INSERT INTO Preannotations (image_id, type, class_name, x, y, width, height, rotation, segmentation, confidence) "
+                                "VALUES (?, ?, ?, NULL, NULL, NULL, NULL, 0, NULL, ?)",
+                                (image_id, 'classification', label, float(score))
+                            )
+                            inserted_count = 1
+                        else:
+                            inserted_count = 0
+                        self.conn.commit()
+                        #logger.info(f"Inserted {inserted_count} unique annotations for image {image_path}")
+                        processed += 1
+                        current_progress = ((processed + skipped) / total_images) * 100
+                        pbar.update(1)
+                        pbar.set_postfix({
+                            'processed': processed,
+                            'skipped': skipped,
+                            'progress': f"{current_progress:.1f}%"
+                        })
+                        if self.progress_callback:
+                            self.progress_callback(current_progress)
+                        continue  # Skip to next image
+                    elif mode in ["BoundingBox", "OrientedBoundingBox", "Segmentation"]:
+                        boxes = results["boxes"]
+                        scores = results["scores"]
+                        labels = results["labels"]
+                        masks = results.get("masks", [None] * len(boxes))
+                        annotations = [
+                            {"box": boxes[i], "score": scores[i], "label": labels[i], "mask": masks[i]}
+                            for i in range(len(boxes))
+                        ]
+                        if self.model_type == "yolo":
+                            # Cluster overlapping annotations
+                            G = nx.Graph()
+                            for i in range(len(annotations)):
+                                for j in range(i + 1, len(annotations)):
+                                    if self.compute_iou(annotations[i]["box"], annotations[j]["box"]) > 0.9:
+                                        G.add_edge(i, j)
+                            clusters = list(nx.connected_components(G))
+                            # Include singletons
+                            all_indices = set(range(len(annotations)))
+                            cluster_indices = set.union(*clusters) if clusters else set()
+                            singletons = all_indices - cluster_indices
+                            clusters.extend([{i} for i in singletons])
+                            # Process clusters
+                            kept_annotations = []
+                            for cluster in clusters:
+                                cluster_annotations = [annotations[i] for i in cluster]
+                                if len(cluster) == 1:
+                                    kept_annotations.append(cluster_annotations[0])
                                 else:
-                                    cluster_boxes = [anno["box"] for anno in cluster_annotations]
-                                    x1 = max(0, min(b[0] for b in cluster_boxes))
-                                    y1 = max(0, min(b[1] for b in cluster_boxes))
-                                    x2 = min(image.width, max(b[2] for b in cluster_boxes))
-                                    y2 = min(image.height, max(b[3] for b in cluster_boxes))
-                                    cropped_image = image.crop((x1, y1, x2, y2))
-                                    best_label = self.get_best_label(cropped_image, unique_labels)
-                                    candidates = [anno for anno in cluster_annotations if anno["label"] == best_label]
-                                    best_anno = max(candidates, key=lambda x: x["score"])
-                                kept_annotations.append(best_anno)
-                    else:
-                        kept_annotations = annotations
-                    # Insert annotations into database
-                    inserted_count = 0
-                    for anno in kept_annotations:
-                        if mode == "BoundingBox":
-                            x, y, w, h = anno["box"][0], anno["box"][1], anno["box"][2] - anno["box"][0], anno["box"][3] - anno["box"][1]
-                            if w > 0 and h > 0:
-                                cursor.execute(
-                                    "INSERT INTO Preannotations (image_id, type, class_name, x, y, width, height, rotation, segmentation, confidence) "
-                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                    (image_id, 'rect', anno["label"], float(x), float(y), float(w), float(h), 0.0, None, float(anno["score"]))
-                                )
-                                inserted_count += 1
-                            else:
-                                logger.warning(f"Skipped invalid bounding box for {anno['label']} in {image_path}: w={w}, h={h}")
-                        elif mode == "Segmentation":
-                            if anno["mask"].any():
-                                mask_uint8 = (anno["mask"] > 0).astype(np.uint8)
-                                # Adaptive hole filling
-                                max_iterations = 10
-                                kernel_size = 5
-                                mask_filled = mask_uint8.copy()
-                                for _ in range(max_iterations):
-                                    kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                                    mask_filled_new = cv2.morphologyEx(mask_filled, cv2.MORPH_CLOSE, kernel)
-                                    contours, hierarchy = cv2.findContours(
-                                        mask_filled_new,
-                                        cv2.RETR_CCOMP,
-                                        cv2.CHAIN_APPROX_SIMPLE
-                                    )
-                                    has_large_holes = False
-                                    if hierarchy is not None:
-                                        for i in range(len(contours)):
-                                            if hierarchy[0][i][3] != -1:
-                                                area = cv2.contourArea(contours[i])
-                                                if area > 100:
-                                                    has_large_holes = True
-                                                    break
-                                    if not has_large_holes:
-                                        mask_filled = mask_filled_new
-                                        break
-                                    mask_filled = mask_filled_new
-                                    kernel_size += 2
-                                contours, _ = cv2.findContours(mask_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                                if contours:
-                                    largest_contour = max(contours, key=cv2.contourArea)
-                                    simplified = self._simplify_contour(largest_contour)
-                                    if simplified:
-                                        segmentation = json.dumps(simplified)
-                                        cursor.execute(
-                                            "INSERT INTO Preannotations (image_id, type, class_name, x, y, width, height, rotation, segmentation, confidence) "
-                                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                            (image_id, 'polygon', anno["label"], None, None, None, None, 0.0, segmentation, float(anno["score"]))
-                                        )
-                                        inserted_count += 1
+                                    unique_labels = list(set(anno["label"] for anno in cluster_annotations))
+                                    if len(unique_labels) == 1:
+                                        best_anno = max(cluster_annotations, key=lambda x: x["score"])
                                     else:
-                                        logger.debug(f"Skipped invalid simplified contour for {anno['label']} in {image_path}")
+                                        cluster_boxes = [anno["box"] for anno in cluster_annotations]
+                                        x1 = max(0, min(b[0] for b in cluster_boxes))
+                                        y1 = max(0, min(b[1] for b in cluster_boxes))
+                                        x2 = min(image.width, max(b[2] for b in cluster_boxes))
+                                        y2 = min(image.height, max(b[3] for b in cluster_boxes))
+                                        cropped_image = image.crop((x1, y1, x2, y2))
+                                        best_label, _ = self.image_processor.get_best_label(cropped_image, unique_labels)
+                                        candidates = [anno for anno in cluster_annotations if anno["label"] == best_label]
+                                        best_anno = max(candidates, key=lambda x: x["score"])
+                                    kept_annotations.append(best_anno)
+                        else:
+                            kept_annotations = annotations
+                        # Insert annotations into database
+                        inserted_count = 0
+                        for anno in kept_annotations:
+                            if mode in ["BoundingBox", "OrientedBoundingBox"]:
+                                x, y, w, h = anno["box"][0], anno["box"][1], anno["box"][2] - anno["box"][0], anno["box"][3] - anno["box"][1]
+                                if w > 0 and h > 0:
+                                    cursor.execute(
+                                        "INSERT INTO Preannotations (image_id, type, class_name, x, y, width, height, rotation, segmentation, confidence) "
+                                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                        (image_id, 'rect', anno["label"], float(x), float(y), float(w), float(h), 0.0, None, float(anno["score"]))
+                                    )
+                                    inserted_count += 1
                                 else:
-                                    logger.debug(f"Skipped empty contours for {anno['label']} in {image_path}")
-                            else:
-                                logger.debug(f"Skipped empty mask for {anno['label']} in {image_path}")
-                    self.conn.commit()
-                    logger.info(f"Inserted {inserted_count} unique annotations for image {image_path}")
-            except Exception as e:
-                logger.error(f"Error processing image {image_path}: {str(e)}")
-                continue
-
+                                    logger.warning(f"Skipped invalid bounding box for {anno['label']} in {image_path}: w={w}, h={h}")
+                            elif mode == "Segmentation":
+                                if anno["mask"] is not None and anno["mask"].any():
+                                    mask_uint8 = (anno["mask"] > 0).astype(np.uint8)
+                                    # Adaptive hole filling
+                                    max_iterations = 10
+                                    kernel_size = 5
+                                    mask_filled = mask_uint8.copy()
+                                    for _ in range(max_iterations):
+                                        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                                        mask_filled_new = cv2.morphologyEx(mask_filled, cv2.MORPH_CLOSE, kernel)
+                                        contours, hierarchy = cv2.findContours(
+                                            mask_filled_new,
+                                            cv2.RETR_CCOMP,
+                                            cv2.CHAIN_APPROX_SIMPLE
+                                        )
+                                        has_large_holes = False
+                                        if hierarchy is not None:
+                                            for i in range(len(contours)):
+                                                if hierarchy[0][i][3] != -1:
+                                                    area = cv2.contourArea(contours[i])
+                                                    if area > 100:
+                                                        has_large_holes = True
+                                                        break
+                                        if not has_large_holes:
+                                            mask_filled = mask_filled_new
+                                            break
+                                        mask_filled = mask_filled_new
+                                        kernel_size += 2
+                                    contours, _ = cv2.findContours(mask_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                                    if contours:
+                                        largest_contour = max(contours, key=cv2.contourArea)
+                                        simplified = self._simplify_contour(largest_contour)
+                                        if simplified:
+                                            segmentation = json.dumps(simplified)
+                                            cursor.execute(
+                                                "INSERT INTO Preannotations (image_id, type, class_name, x, y, width, height, rotation, segmentation, confidence) "
+                                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                                (image_id, 'polygon', anno["label"], None, None, None, None, 0.0, segmentation, float(anno["score"]))
+                                            )
+                                            inserted_count += 1
+                                        else:
+                                            logger.debug(f"Skipped invalid simplified contour for {anno['label']} in {image_path}")
+                                    else:
+                                        logger.debug(f"Skipped empty contours for {anno['label']} in {image_path}")
+                                else:
+                                    logger.debug(f"Skipped empty mask for {anno['label']} in {image_path}")
+                        self.conn.commit()
+                        logger.info(f"Inserted {inserted_count} unique annotations for image {image_path}")
+                        processed += 1
+                    # Update tqdm bar after successful processing
+                    current_progress = ((processed + skipped) / total_images) * 100
+                    pbar.update(1)
+                    pbar.set_postfix({
+                        'processed': processed,
+                        'skipped': skipped,
+                        'progress': f"{current_progress:.1f}%"
+                    })
+                    if self.progress_callback:
+                        self.progress_callback(current_progress)
+                except Exception as e:
+                    logger.error(f"Error processing image {image_path}: {str(e)}")
+                    skipped += 1 # Count errors as skipped for progress
+                    current_progress = ((processed + skipped) / total_images) * 100
+                    pbar.update(1)
+                    pbar.set_postfix({
+                        'processed': processed,
+                        'skipped': skipped,
+                        'progress': f"{current_progress:.1f}%"
+                    })
+                    if self.progress_callback:
+                        self.progress_callback(current_progress)
+                    continue
+        if self.progress_callback:
+            self.progress_callback(100.0)
+        
+        logger.info("Starting memory cleanup after preannotation...")
+        del self.image_processor
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        logger.info("Memory cleanup completed.")
     def __del__(self):
         self.conn.close()
