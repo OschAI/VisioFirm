@@ -44,7 +44,7 @@ class CocoAnnotationParser:
                             'segmentation': anno.get('segmentation')
                         } for anno in self.annotations_by_image[img_id]
                     ]
-                    logger.info(f"Retrieved {len(annotations)} COCO annotations for {image_file_name}")
+                    #logger.info(f"Retrieved {len(annotations)} COCO annotations for {image_file_name}")
                     return annotations
                 else:
                     logger.info(f"No COCO annotations found for {image_file_name}")
@@ -53,15 +53,23 @@ class CocoAnnotationParser:
         return []
 
 class YoloAnnotationParser:
-    def __init__(self, yaml_path, images_dir):
+    def __init__(self, yaml_path, images_dir=None):
         with open(yaml_path, 'r') as f:
             self.yaml_data = yaml.safe_load(f)
         self.classes = self.yaml_data.get('names', [])
         self.images_dir = images_dir
-        logger.info(f"Initialized YOLO parser for {yaml_path}")
+        logger.info(f"Initialized YOLO parser for {yaml_path}" + (f" with images_dir={images_dir}" if images_dir else ""))
 
     def get_annotations_for_image(self, image_file_name):
-        txt_file = os.path.join(self.images_dir, os.path.splitext(image_file_name)[0] + '.txt')
+        txt_base = os.path.splitext(image_file_name)[0] + '.txt'
+        if self.images_dir:
+            txt_file = os.path.join(self.images_dir, txt_base)
+        else:
+            # For existing project: Assumes txt in annotation dir; but since parse_and_add_annotations walks temp_dir, it can pass full txt paths if needed.
+            # For simplicity: Return empty if no dir (handled in parse_and_add_annotations by checking existence)
+            logger.warning(f"No images_dir provided for YOLO; cannot locate {txt_base} without path")
+            return []
+        
         if os.path.exists(txt_file):
             annotations = []
             with open(txt_file, 'r') as f:
@@ -97,7 +105,7 @@ class YoloAnnotationParser:
                                 'obbox': None,
                                 'segmentation': points
                             })
-            logger.info(f"Retrieved {len(annotations)} YOLO annotations for {image_file_name}")
+            #logger.info(f"Retrieved {len(annotations)} YOLO annotations for {image_file_name}")
             return annotations
         logger.info(f"No YOLO annotations found for {image_file_name}")
         return []
@@ -128,5 +136,5 @@ class NameMatcher:
                 best_similarity = similarity
                 best_match = project_class
 
-        logger.info(f"Matched '{annotation_class}' to '{best_match}' with similarity {best_similarity}")
+        #logger.info(f"Matched '{annotation_class}' to '{best_match}' with similarity {best_similarity}")
         return best_match
