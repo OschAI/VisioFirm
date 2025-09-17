@@ -4,87 +4,135 @@ import { selectImage } from './imageHandling.js';
 import { pushToUndoStack } from './annotationCore.js';
 
 export function initToolControls() {
-    document.getElementById('rect-mode').addEventListener('click', () => {
-        if (setupType === "Segmentation") return;
-        setMode('rect'); // Use setter
-        updateButtonStates();
-    });
+    const rectBtn = document.getElementById('rect-mode');
+    if (rectBtn) {
+        rectBtn.addEventListener('click', () => {
+            if (setupType === "Segmentation") return;
+            setMode('rect'); // Use setter
+            updateButtonStates();
+        });
+    }
 
-    document.getElementById('polygon-mode').addEventListener('click', () => {
-        if (setupType !== "Segmentation") return;
-        setMode('polygon'); // Use setter
-        setSelectedAnnotation(null); // Use setter
-        setCurrentAnnotation(null); // Use setter
-        updateButtonStates();
-    });
-
-    document.getElementById('select-mode').addEventListener('click', () => {
-        setMode('select'); // Use setter
-        updateButtonStates();
-    });
-
-    document.getElementById('reset-view').addEventListener('click', resetView);
-
-    document.getElementById('undo-btn').addEventListener('click', () => {
-        if (undoStack[currentImageKey] && undoStack[currentImageKey].length > 0) { // Now defined
-            setAnnotations(undoStack[currentImageKey].pop()); // Use setter
-            setSelectedAnnotation(annotations.length > 0 ? annotations[annotations.length - 1] : null); // Use setter
-            drawImage();
-        }
-    });
-
-    document.getElementById('delete-btn').addEventListener('click', () => {
-        if (selectedAnnotation) {
-            pushToUndoStack();
-            setAnnotations(annotations.filter(a => a !== selectedAnnotation)); // Use setter
+    const polygonBtn = document.getElementById('polygon-mode');
+    if (polygonBtn) {
+        polygonBtn.addEventListener('click', () => {
+            if (setupType !== "Segmentation") return;
+            setMode('polygon'); // Use setter
             setSelectedAnnotation(null); // Use setter
+            setCurrentAnnotation(null); // Use setter
+            updateButtonStates();
+        });
+    }
+
+    const selectBtn = document.getElementById('select-mode');
+    if (selectBtn) {
+        selectBtn.addEventListener('click', () => {
+            setMode('select'); // Use setter
+            updateButtonStates();
+        });
+    }
+
+    const resetBtn = document.getElementById('reset-view');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetView);
+    }
+
+    const undoBtn = document.getElementById('undo-btn');
+    if (undoBtn) {
+        undoBtn.addEventListener('click', () => {
+            if (undoStack[currentImageKey] && undoStack[currentImageKey].length > 0) { // Now defined
+                setAnnotations(undoStack[currentImageKey].pop()); // Use setter
+                setSelectedAnnotation(annotations.length > 0 ? annotations[annotations.length - 1] : null); // Use setter
+                drawImage();
+            }
+        });
+    }
+
+    const deleteBtn = document.getElementById('delete-btn');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => {
+            if (selectedAnnotation) {
+                pushToUndoStack();
+                setAnnotations(annotations.filter(a => a !== selectedAnnotation)); // Use setter
+                setSelectedAnnotation(null); // Use setter
+                drawImage();
+            }
+        });
+    }
+
+    const zoomInBtn = document.getElementById('zoom-in-btn');
+    if (zoomInBtn) {
+        zoomInBtn.addEventListener('click', () => {
+            viewport.zoom = Math.min(viewport.maxZoom, viewport.zoom * 1.1);
             drawImage();
-        }
-    });
+        });
+    }
 
-    document.getElementById('zoom-in-btn').addEventListener('click', () => {
-        viewport.zoom = Math.min(viewport.maxZoom, viewport.zoom * 1.1);
-        drawImage();
-    });
-
-    document.getElementById('zoom-out-btn').addEventListener('click', () => {
-        viewport.zoom = Math.max(viewport.minZoom, viewport.zoom * 0.9);
-        drawImage();
-    });
-
-    document.getElementById('duplicate-btn').addEventListener('click', () => {
-        if (selectedAnnotation) {
-            pushToUndoStack();
-            const duplicate = scaleAnnotation(selectedAnnotation, currentImage.width, currentImage.height, currentImage.width, currentImage.height);
-            duplicate.x += 0.3 * duplicate.x;
-            duplicate.y += 0.3 * duplicate.y;
-            annotations.push(duplicate); // Note: Direct push is okay since we're modifying the array, not reassigning it
-            setSelectedAnnotation(duplicate); // Use setter
+    const zoomOutBtn = document.getElementById('zoom-out-btn');
+    if (zoomOutBtn) {
+        zoomOutBtn.addEventListener('click', () => {
+            viewport.zoom = Math.max(viewport.minZoom, viewport.zoom * 0.9);
             drawImage();
-        }
-    });
+        });
+    }
 
-    document.getElementById('save-btn').addEventListener('click', () => {
-        document.getElementById('approve-btn').click();
-    });
+    const duplicateBtn = document.getElementById('duplicate-btn');
+    if (duplicateBtn) {
+        duplicateBtn.addEventListener('click', () => {
+            if (selectedAnnotation) {
+                pushToUndoStack();
+                const duplicate = scaleAnnotation(selectedAnnotation, currentImage.width, currentImage.height, currentImage.width, currentImage.height);
+                duplicate.x += 0.3 * duplicate.x;
+                duplicate.y += 0.3 * duplicate.y;
+                annotations.push(duplicate); // Note: Direct push is okay since we're modifying the array, not reassigning it
+                setSelectedAnnotation(duplicate); // Use setter
+                drawImage();
+            }
+        });
+    }
 
-    document.getElementById('grid-btn').addEventListener('click', () => {
-        setGridEnabled(!gridEnabled); // Use setter
-        document.getElementById('grid-btn').classList.toggle('active', gridEnabled);
-        drawImage();
-    });
+    const saveBtn = document.getElementById('save-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', () => {
+            document.getElementById('approve-btn').click();
+        });
+    }
 
-    document.getElementById('prev-image-btn').addEventListener('click', () => {
-        if (currentImageIndex > 0) {
-            selectImage(thumbnailImages[currentImageIndex - 1], currentImageIndex - 1);
-        }
-    });
+    const gridBtn = document.getElementById('grid-btn');
+    if (gridBtn) {
+        gridBtn.addEventListener('click', () => {
+            setGridEnabled(!gridEnabled); // Use setter
+            gridBtn.classList.toggle('active', gridEnabled);
+            drawImage();
+        });
+    }
 
-    document.getElementById('next-image-btn').addEventListener('click', () => {
-        if (currentImageIndex < thumbnailImages.length - 1) {
-            selectImage(thumbnailImages[currentImageIndex + 1], currentImageIndex + 1);
-        }
-    });
+    const prevBtn = document.getElementById('prev-image-btn');
+    if (prevBtn) {
+        prevBtn.addEventListener('click', () => {
+            if (currentImageIndex > 0) {
+                selectImage(thumbnailImages[currentImageIndex - 1], currentImageIndex - 1);
+            }
+        });
+    }
+
+    const nextBtn = document.getElementById('next-image-btn');
+    if (nextBtn) {
+        nextBtn.addEventListener('click', () => {
+            if (currentImageIndex < thumbnailImages.length - 1) {
+                selectImage(thumbnailImages[currentImageIndex + 1], currentImageIndex + 1);
+            }
+        });
+    }
+
+    // Optional buttons
+    const magicModeBtn = document.getElementById('magic-mode');
+    if (magicModeBtn) {
+        magicModeBtn.addEventListener('click', () => {
+            setMode('magic');
+            updateButtonStates();
+        });
+    }
 
     // Hide buttons based on setupType
     const polygonModeBtn = document.getElementById('polygon-mode');

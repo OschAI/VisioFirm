@@ -82,7 +82,7 @@ export function drawImage() {
 
 function drawAnnotations() {
     annotations
-        .filter(anno => !anno.isPreannotation || (anno.confidence >= confidenceThreshold))
+        .filter(anno => anno.type !== 'classification' && (!anno.isPreannotation || (anno.confidence >= confidenceThreshold)))
         .forEach(anno => {
             if (anno.type === 'rect' || anno.type === 'obbox') {
                 drawRectAnnotation(anno);

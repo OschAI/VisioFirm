@@ -8,6 +8,8 @@ import {
     viewport,
     canvas,
     setupType,
+    confidenceThreshold,
+    setSelectedLabel,
     setCurrentImageKey,
     setCurrentImage,
     setAnnotations,
@@ -18,7 +20,7 @@ import {
     updateTagHighlights
 } from './globals.js';
 import { drawImage, resetView } from './annotationDrawing.js';
-import { updateAnnotationStatus } from './main.js';
+import { updateAnnotationStatus, updateClassTags } from './main.js';
 
 export async function selectImage(imgElement, index = -1) {
     if (!imgElement || !imgElement.getAttribute('src')) {
@@ -83,12 +85,29 @@ export async function selectImage(imgElement, index = -1) {
 
         // Combine into a single array
         const allAnnotations = [...loadedAnnotations, ...loadedPreannotations];
-        setAnnotations(allAnnotations);
+        
+        if (setupType === 'Classification') {
+            setAnnotations(allAnnotations);
+            setSelectedAnnotation(null);
+            if (allAnnotations.length > 0) {
+                setSelectedLabel(allAnnotations[0].label);
+                // Filter out preannotations if needed, or handle confidence
+                const preanno = loadedPreannotations[0];
+                if (preanno && preanno.confidence >= confidenceThreshold) {
+                    // Optionally suggest preannotation, but for now, use loaded annotation
+                }
+            } else {
+                setSelectedLabel(null);
+            }
+            updateClassTags(); // Refresh UI with selected label
+        } else {
+            setAnnotations(allAnnotations);
 
-        // Select the first annotation to show handles
-        setSelectedAnnotation(allAnnotations.length > 0 ? allAnnotations[0] : null);
-        updateTagHighlights();
-
+            // Select the first annotation to show handles
+            setSelectedAnnotation(allAnnotations.length > 0 ? allAnnotations[0] : null);
+            updateTagHighlights();
+        }
+        
         const cachedAnnotations = annotationCache[imageKey] || [];
         if (cachedAnnotations.length > 0) {
             const updatedCachedAnnotations = cachedAnnotations.map(anno => ({
@@ -97,9 +116,20 @@ export async function selectImage(imgElement, index = -1) {
                 rotation: anno.rotation || 0,
                 isPreannotation: anno.isPreannotation || false // Preserve flag if cached
             }));
-            setAnnotations(updatedCachedAnnotations);
-            setSelectedAnnotation(updatedCachedAnnotations.length > 0 ? updatedCachedAnnotations[0] : null);
-            console.log('Using cached annotations:', updatedCachedAnnotations);
+            if (setupType === 'Classification') {
+                setAnnotations(updatedCachedAnnotations);
+                setSelectedAnnotation(null);
+                if (updatedCachedAnnotations.length > 0) {
+                    setSelectedLabel(updatedCachedAnnotations[0].label);
+                    updateClassTags();
+                } else {
+                    setSelectedLabel(null);
+                }
+            } else {
+                setAnnotations(updatedCachedAnnotations);
+                setSelectedAnnotation(updatedCachedAnnotations.length > 0 ? updatedCachedAnnotations[0] : null);
+                console.log('Using cached annotations:', updatedCachedAnnotations);
+            }
         }
 
         setUndoStack({
@@ -112,7 +142,7 @@ export async function selectImage(imgElement, index = -1) {
         const filename = imageKey.split('/').pop();
         const isAnnotated = loadedAnnotations.length > 0 || isReviewed;
         const isPreannotated = loadedPreannotations.length > 0 && !isAnnotated;
-        updateAnnotationStatus(imageKey, isAnnotated);
+        updateAnnotationStatus(imageKey, isAnnotated, isPreannotated);
 
         const statusElement = document.querySelector(`[data-id="${filename}"] .image-status`);
         if (statusElement) {
@@ -145,10 +175,13 @@ export async function selectImage(imgElement, index = -1) {
 export function resizeCanvas() {
     if (!currentImage || !currentImageKey) return;
     const container = document.querySelector('.image-container');
+    if (!container) {
+        console.error('Container element not found');
+        return;
+    }
     const maxWidth = container.clientWidth * 0.9;
     const maxHeight = container.clientHeight * 0.9;
     const aspectRatio = currentImage.width / currentImage.height;
-
     if (currentImage.width / currentImage.height > maxWidth / maxHeight) {
         canvas.width = maxWidth;
         canvas.height = maxWidth / aspectRatio;
@@ -158,7 +191,6 @@ export function resizeCanvas() {
         canvas.width = maxHeight * aspectRatio;
         viewport.minZoom = 0.9 * maxHeight / currentImage.height;
     }
-
     viewport.zoom = Math.max(viewport.minZoom, viewport.zoom);
     resetView();
 }

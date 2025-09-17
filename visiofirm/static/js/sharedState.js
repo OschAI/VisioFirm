@@ -27,7 +27,14 @@ export const state = {
     canvas: document.getElementById('labeling-canvas'),
     ctx: document.getElementById('labeling-canvas')?.getContext('2d'),
     thumbnailImages: document.querySelectorAll('#annotation-view .thumbnail-image img'),
-    projectName: config.projectName
+    projectName: config.projectName,
+    thumbnailImages: Array.from(document.querySelectorAll('#annotation-view .thumbnail-image img')).map(img => {
+        if (img.dataset.src && !img.src) {
+            img.src = img.dataset.src;  // Pre-load for fallback
+            img.classList.add('loaded');  // Mark as loaded to skip observer
+        }
+        return img;
+    }),
 };
 
 // Initialize mode based on setup type

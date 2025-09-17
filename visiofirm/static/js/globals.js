@@ -31,7 +31,9 @@ export let selectedClass = null;
 export let imageEmbeddings = null;
 export let imageProcessed = null;
 export let worker = null;
+export let selectedLabel = null;
 
+export function setSelectedLabel(value) { selectedLabel = value; }
 export function setIsMoving(value) { isMoving = value; }
 export function setInitialRotation(value) { initialRotation = value; }
 export function setInitialCorners(value) { initialCorners = value; }
@@ -80,6 +82,9 @@ export function initGlobals() {
     canvas = document.getElementById('labeling-canvas');
     ctx = canvas.getContext('2d');
     mode = (setupType === "Segmentation") ? 'polygon' : 'rect';
+    if (setupType === "Classification") {
+        mode = 'select';
+    }
     console.log('Canvas initialized:', canvas, ctx);
 }
 

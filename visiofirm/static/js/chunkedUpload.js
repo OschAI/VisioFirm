@@ -1,6 +1,6 @@
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-const UPLOAD_TIMEOUT = 5000; // 60 seconds
-const MAX_CONCURRENT_UPLOADS = 6; // Max 3 concurrent chunk uploads
+const UPLOAD_TIMEOUT = 5000; // 5 seconds
+const MAX_CONCURRENT_UPLOADS = 6; // Max 6 concurrent chunk uploads
 
 // Helper function to upload a chunk with retries and timeout
 async function uploadChunkWithRetry(formData, maxRetries = 5) {
@@ -42,6 +42,30 @@ async function uploadChunkWithRetry(formData, maxRetries = 5) {
     }
 }
 
+// NEW: Helper for text-only POST (assembly)
+async function postFormDataAsUrlEncoded(url, params, timeout = UPLOAD_TIMEOUT) {
+    const formBody = new URLSearchParams(params).toString();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formBody,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return await response.json();
+    } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            throw new Error(`Request timed out after ${timeout/1000} seconds`);
+        }
+        throw error;
+    }
+}
+
 export async function uploadFiles(files, endpoint, formDataExtras = {}, onProgress = () => {}) {
     const uploadId = generateUUID();
     const fileProgress = new Map();
@@ -54,8 +78,13 @@ export async function uploadFiles(files, endpoint, formDataExtras = {}, onProgre
     // Process files sequentially
     for (const file of files) {
         const fileId = generateUUID();
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;  // Ensure >=1 if size>0
         let startChunk = 0;
+
+        if (file.size === 0) {
+            console.warn(`Skipping empty file: ${file.name}`);
+            continue;  // Skip empty annotations/images
+        }
 
         // Check upload status to resume if possible
         try {
@@ -65,14 +94,14 @@ export async function uploadFiles(files, endpoint, formDataExtras = {}, onProgre
                 body: new URLSearchParams({ upload_id: uploadId, file_id: fileId })
             });
             const status = await statusResponse.json();
-            startChunk = status.uploaded_chunks;
-            console.log(`Resuming upload for ${file.name} at chunk ${startChunk}`);
+            startChunk = status.uploaded_chunks || 0;
+            console.log(`Resuming upload for ${file.name} at chunk ${startChunk}/${totalChunks}`);
         } catch (error) {
             console.error(`Error checking upload status for ${file.name}:`, error);
-            throw error;
+            // Continue without resume
         }
 
-        // Upload chunks with limited concurrency
+        // Upload chunks with limited concurrency (use FormData for files)
         const chunkPromises = [];
         for (let i = startChunk; i < totalChunks; i++) {
             const start = i * CHUNK_SIZE;
@@ -82,15 +111,16 @@ export async function uploadFiles(files, endpoint, formDataExtras = {}, onProgre
             formData.append('chunk', chunk, file.name);
             formData.append('upload_id', uploadId);
             formData.append('file_id', fileId);
-            formData.append('chunk_index', i);
+            formData.append('chunk_index', i.toString());  // Ensure string
             formData.append('filename', file.name);
+            Object.entries(formDataExtras).forEach(([key, value]) => formData.append(key, value));
 
             chunkPromises.push(async () => {
                 try {
                     await uploadChunkWithRetry(formData);
-                    fileProgress.get(file.name).uploaded += chunk.size;
+                    fileProgress.get(file.name).uploaded += (end - start);
                     onProgress(fileProgress);
-                    console.log(`Uploaded chunk ${i}/${totalChunks} for ${file.name}`);
+                    console.log(`Uploaded chunk ${i}/${totalChunks} for ${file.name} (${(end - start)} bytes)`);
                 } catch (error) {
                     console.error(`Failed to upload chunk ${i} for ${file.name}:`, error);
                     throw new Error(`Chunk ${i} upload failed for ${file.name}: ${error.message}`);
@@ -104,34 +134,29 @@ export async function uploadFiles(files, endpoint, formDataExtras = {}, onProgre
             await Promise.all(batch.map(task => task()));
         }
 
-        // Assemble file after all chunks are uploaded
-        try {
-            const formData = new FormData();
-            formData.append('upload_id', uploadId);
-            formData.append('file_id', fileId);
-            formData.append('total_chunks', totalChunks);
-            formData.append('filename', file.name);
+        // NEW: Assembly with URLSearchParams (text-only, avoids multipart parsing issues)
+        if (totalChunks > 0) {  // Only if chunks were uploaded
+            const assemblyParams = {
+                upload_id: uploadId,
+                file_id: fileId,
+                total_chunks: totalChunks.toString(),  // Ensure string
+                filename: file.name
+                // Add file_hash if computed in future
+            };
+            console.log(`Assembling ${file.name} with params:`, assemblyParams);  // NEW: Debug log
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT);
-            const response = await fetch('/assemble_file', {
-                method: 'POST',
-                body: formData,
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-
-            const result = await response.json();
-            if (!result.success) {
-                throw new Error(`File assembly failed for ${file.name}: ${result.error}`);
+            try {
+                const result = await postFormDataAsUrlEncoded('/assemble_file', assemblyParams);
+                if (!result.success) {
+                    throw new Error(`File assembly failed for ${file.name}: ${result.error}`);
+                }
+                console.log(`Assembled file ${file.name} successfully`);
+            } catch (error) {
+                console.error(`Assembly failed for ${file.name}:`, error);
+                throw error;
             }
-            console.log(`Assembled file ${file.name}`);
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                error = new Error('File assembly timed out');
-            }
-            console.error(`Assembly failed for ${file.name}:`, error);
-            throw error;
+        } else {
+            console.warn(`No chunks to assemble for ${file.name} (size: ${file.size})`);
         }
     }
 

@@ -1,3 +1,5 @@
+// Updated keyboardShortcuts.js with additional check for annotation-view visibility
+
 import {
     selectedAnnotation,
     setupType,
@@ -26,6 +28,18 @@ import { pushToUndoStack, clampToImageBounds } from './annotationCore.js';
 
 export function initKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
+        // Check if we are in annotation-view; if not, skip all shortcuts
+        const annotationView = document.getElementById('annotation-view');
+        if (!annotationView || !annotationView.classList.contains('show')) {
+            return;
+        }
+
+        // Skip all custom shortcuts if focus is on an input, textarea, or contenteditable element.
+        // This allows default browser behavior (e.g., typing, arrow navigation in text) without interference.
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+            return; // Do nothing; let the default key behavior happen.
+        }
+
         if (e.ctrlKey && e.key === 'a') {
             e.preventDefault();
             setSelectedAnnotation(null);
@@ -45,31 +59,29 @@ export function initKeyboardShortcuts() {
             }
         }
         else if (e.ctrlKey && e.key === 'v') {
-            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && !e.target.isContentEditable) {
-                e.preventDefault();
-                navigator.clipboard.readText().then(text => {
-                    try {
-                        const pastedAnnotation = JSON.parse(text);
-                        if (pastedAnnotation && pastedAnnotation.type) {
-                            pushToUndoStack();
-                            const scaledAnnotation = scaleAnnotation(
-                                pastedAnnotation,
-                                clipboardImageResolution.width, clipboardImageResolution.height,
-                                currentImage.width, currentImage.height
-                            );
-                            scaledAnnotation.x += 10;
-                            scaledAnnotation.y += 10;
-                            setAnnotations([...annotations, scaledAnnotation]);
-                            setSelectedAnnotation(scaledAnnotation);
-                            drawImage();
-                        }
-                    } catch (err) {
-                        console.error('Failed to paste annotation: ', err);
+            e.preventDefault();
+            navigator.clipboard.readText().then(text => {
+                try {
+                    const pastedAnnotation = JSON.parse(text);
+                    if (pastedAnnotation && pastedAnnotation.type) {
+                        pushToUndoStack();
+                        const scaledAnnotation = scaleAnnotation(
+                            pastedAnnotation,
+                            clipboardImageResolution.width, clipboardImageResolution.height,
+                            currentImage.width, currentImage.height
+                        );
+                        scaledAnnotation.x += 10;
+                        scaledAnnotation.y += 10;
+                        setAnnotations([...annotations, scaledAnnotation]);
+                        setSelectedAnnotation(scaledAnnotation);
+                        drawImage();
                     }
-                }).catch(err => {
-                    console.error('Failed to read clipboard contents: ', err);
-                });
-            }
+                } catch (err) {
+                    console.error('Failed to paste annotation: ', err);
+                }
+            }).catch(err => {
+                console.error('Failed to read clipboard contents: ', err);
+            });
         }
         else if (e.ctrlKey && e.key === 'd') {
             e.preventDefault();
@@ -196,6 +208,17 @@ export function initKeyboardShortcuts() {
     });
 
     document.addEventListener('keyup', (e) => {
+        // Check if we are in annotation-view; if not, skip
+        const annotationView = document.getElementById('annotation-view');
+        if (!annotationView || !annotationView.classList.contains('show')) {
+            return;
+        }
+
+        // Apply the same input focus check for keyup events as well.
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+            return;
+        }
+
         if (e.key === 'r' && setupType === "Oriented Bounding Box") {
             setIsRotating(false);
             drawImage();

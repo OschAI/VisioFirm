@@ -15,34 +15,55 @@ export function switchToAnnotationView(imgElement = null) {
 
     annotationView.style.display = 'flex';
     annotationView.classList.remove('hide');
+    annotationView.classList.add('show');
+
+    document.querySelectorAll('#annotation-view .lazy-load').forEach(img => {
+        if (!img.src) {
+            img.src = img.dataset.src;
+        }
+    });
+
     setTimeout(() => {
         annotationView.classList.add('show');
     }, 10);
 
+    let index = 0; // Default to first
+
     if (imgElement) {
         const gridCard = imgElement.closest('.grid-card');
         const listRow = imgElement.closest('#list-table tbody tr');
-        let index;
 
         if (gridCard) {
-            // Grid view index calculation
             index = Array.from(document.querySelectorAll('.grid-card')).indexOf(gridCard);
         } else if (listRow) {
-            // List view index calculation
             index = Array.from(document.querySelectorAll('#list-table tbody tr')).indexOf(listRow);
         } else {
             console.error('Could not determine parent element for image:', imgElement);
-            return;
         }
 
         if (index === -1) {
             console.error('Image element not found in current view:', imgElement);
-            return;
+            index = 0; // Fallback to first
         }
+    }
 
-        selectImage(imgElement, index);
-    } else if (!state.currentImage && state.thumbnailImages.length > 0) {
-        selectImage(state.thumbnailImages[0], 0); // Fallback to first image
+    const allThumbnails = document.querySelectorAll('#annotation-view .thumbnail-row img'); // Fresh query for current order
+    const targetImg = allThumbnails[index];
+    if (targetImg) {
+        // Ensure src is set (redundant after force-load, but safe)
+        if (!targetImg.src) {
+            targetImg.src = targetImg.dataset.src;
+        }
+        selectImage(targetImg, index);
+    } else if (allThumbnails.length > 0) {
+        // Fallback for button click or invalid index
+        const firstImg = allThumbnails[0];
+        if (!firstImg.src) {
+            firstImg.src = firstImg.dataset.src;
+        }
+        selectImage(firstImg, 0);
+    } else {
+        console.error('No thumbnails available in annotation view');
     }
 }
 
@@ -63,6 +84,9 @@ export function switchToGridView() {
     setTimeout(() => {
         gridView.classList.add('show');
     }, 10);
+    annotationView.classList.add('hide');
+    document.getElementById('grid-view').classList.remove('hide');
+
 }
 
 export function initializeGridView() {
@@ -79,33 +103,53 @@ export function initializeGridView() {
 export function sortImages(sortType) {
     const gridCards = Array.from(document.querySelectorAll('.grid-card'));
     const listRows = Array.from(document.querySelectorAll('#list-table tbody tr'));
+    const thumbnailRows = Array.from(document.querySelectorAll('.thumbnail-row'));
 
-    let sortedGrid, sortedList;
+    let sortedGrid = gridCards;
+    let sortedList = listRows;
+    let sortedThumbnails = thumbnailRows;
 
     switch(sortType) {
         case 'name-asc':
             sortedGrid = gridCards.sort((a, b) => a.dataset.id.localeCompare(b.dataset.id));
-            sortedList = listRows.sort((a, b) => a.dataset.id.localeCompare(b.dataset.id));
+            sortedList = listRows.sort((a, b) => {
+                const aPath = a.querySelector('.image-checkbox')?.dataset.path || '';
+                const bPath = b.querySelector('.image-checkbox')?.dataset.path || '';
+                return aPath.split('/').pop().localeCompare(bPath.split('/').pop());
+            });
+            sortedThumbnails = thumbnailRows.sort((a, b) => a.dataset.id.localeCompare(b.dataset.id));
             break;
         case 'name-desc':
             sortedGrid = gridCards.sort((a, b) => b.dataset.id.localeCompare(a.dataset.id));
-            sortedList = listRows.sort((a, b) => b.dataset.id.localeCompare(a.dataset.id));
+            sortedList = listRows.sort((a, b) => {
+                const aPath = a.querySelector('.image-checkbox')?.dataset.path || '';
+                const bPath = b.querySelector('.image-checkbox')?.dataset.path || '';
+                return bPath.split('/').pop().localeCompare(aPath.split('/').pop());
+            });
+            sortedThumbnails = thumbnailRows.sort((a, b) => b.dataset.id.localeCompare(a.dataset.id));
             break;
         case 'date-asc':
             sortedGrid = gridCards.sort((a, b) => new Date(a.dataset.date) - new Date(b.dataset.date));
             sortedList = listRows.sort((a, b) => new Date(a.dataset.date) - new Date(b.dataset.date));
+            sortedThumbnails = thumbnailRows.sort((a, b) => new Date(a.dataset.date) - new Date(b.dataset.date));
             break;
         case 'date-desc':
             sortedGrid = gridCards.sort((a, b) => new Date(b.dataset.date) - new Date(a.dataset.date));
             sortedList = listRows.sort((a, b) => new Date(b.dataset.date) - new Date(a.dataset.date));
+            sortedThumbnails = thumbnailRows.sort((a, b) => new Date(b.dataset.date) - new Date(a.dataset.date));
             break;
         case 'status-asc':
             sortedGrid = gridCards.sort((a, b) => {
                 const aStatus = a.dataset.annotated === 'true' ? 0 : (a.dataset.preannotated === 'true' ? 1 : 2);
                 const bStatus = b.dataset.annotated === 'true' ? 0 : (b.dataset.preannotated === 'true' ? 1 : 2);
-                return aStatus - bStatus;
+                return aStatus - bStatus;  // Annotated (0) first, then Pre-annotated (1), then Not (2)
             });
             sortedList = listRows.sort((a, b) => {
+                const aStatus = a.dataset.annotated === 'true' ? 0 : (a.dataset.preannotated === 'true' ? 1 : 2);
+                const bStatus = b.dataset.annotated === 'true' ? 0 : (b.dataset.preannotated === 'true' ? 1 : 2);
+                return aStatus - bStatus;
+            });
+            sortedThumbnails = thumbnailRows.sort((a, b) => {
                 const aStatus = a.dataset.annotated === 'true' ? 0 : (a.dataset.preannotated === 'true' ? 1 : 2);
                 const bStatus = b.dataset.annotated === 'true' ? 0 : (b.dataset.preannotated === 'true' ? 1 : 2);
                 return aStatus - bStatus;
@@ -115,9 +159,14 @@ export function sortImages(sortType) {
             sortedGrid = gridCards.sort((a, b) => {
                 const aStatus = a.dataset.annotated === 'true' ? 0 : (a.dataset.preannotated === 'true' ? 1 : 2);
                 const bStatus = b.dataset.annotated === 'true' ? 0 : (b.dataset.preannotated === 'true' ? 1 : 2);
-                return bStatus - aStatus;
+                return bStatus - aStatus;  // Not (2) first, then Pre-annotated (1), then Annotated (0)
             });
             sortedList = listRows.sort((a, b) => {
+                const aStatus = a.dataset.annotated === 'true' ? 0 : (a.dataset.preannotated === 'true' ? 1 : 2);
+                const bStatus = b.dataset.annotated === 'true' ? 0 : (b.dataset.preannotated === 'true' ? 1 : 2);
+                return bStatus - aStatus;
+            });
+            sortedThumbnails = thumbnailRows.sort((a, b) => {
                 const aStatus = a.dataset.annotated === 'true' ? 0 : (a.dataset.preannotated === 'true' ? 1 : 2);
                 const bStatus = b.dataset.annotated === 'true' ? 0 : (b.dataset.preannotated === 'true' ? 1 : 2);
                 return bStatus - aStatus;
@@ -127,6 +176,7 @@ export function sortImages(sortType) {
             return;
     }
 
+    // Re-append sorted elements
     const gridContainer = document.getElementById('grid-thumbnails');
     gridContainer.innerHTML = '';
     sortedGrid.forEach(card => gridContainer.appendChild(card));
@@ -134,6 +184,15 @@ export function sortImages(sortType) {
     const listBody = document.querySelector('#list-table tbody');
     listBody.innerHTML = '';
     sortedList.forEach(row => listBody.appendChild(row));
+
+    const thumbnailsTbody = document.querySelector('.thumbnail-table tbody');
+    thumbnailsTbody.innerHTML = '';
+    sortedThumbnails.forEach(row => thumbnailsTbody.appendChild(row));
+
+    // REMOVED: Reindexing loops - these override the database image_id with positional indices
+    // document.querySelectorAll('#grid-thumbnails .grid-card').forEach((card, index) => { ... });
+    // document.querySelectorAll('#list-table tbody tr').forEach((row, index) => { ... });
+    // document.querySelectorAll('.thumbnail-row').forEach((row, index) => { ... });
 }
 
 export function toggleView(viewType) {
