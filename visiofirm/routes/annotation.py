@@ -22,7 +22,9 @@ from werkzeug.utils import secure_filename
 from typing import Optional, Dict, Any
 
 router = APIRouter(prefix="/annotation")
-templates = Jinja2Templates(directory="visiofirm/templates")
+module_dir = os.path.dirname(__file__)
+templates_dir = os.path.join(module_dir, "..", "templates")
+templates = Jinja2Templates(directory=templates_dir)
 logger = logging.getLogger(__name__)
 
 # In-memory storage for status (shared for web; API can use instance attrs)

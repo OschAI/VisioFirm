@@ -25,7 +25,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory="visiofirm/templates")
+module_dir = os.path.dirname(__file__)
+templates_dir = os.path.join(module_dir, "..", "templates")
+templates = Jinja2Templates(directory=templates_dir)
 
 async def get_current_user_optional(request: Request) -> Optional[User]:
     try:
