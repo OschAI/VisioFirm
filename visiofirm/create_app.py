@@ -10,15 +10,12 @@ from visiofirm.routes.dashboard import router as dashboard_router
 from visiofirm.routes.annotation import router as annotation_router
 import os
 from visiofirm.security import SECRET_KEY
-
 app_instance = None
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
     yield
-
 def create_app():
     global app_instance
     if app_instance is None:
@@ -27,28 +24,28 @@ def create_app():
             description="Fast AI-powered image annotation tool",
             lifespan=lifespan
         )
-        
+       
         # Compute paths relative to this module's directory
         module_dir = os.path.dirname(__file__)
         templates_dir = os.path.join(module_dir, "templates")
         static_dir = os.path.join(module_dir, "static")
-        
+       
         templates = Jinja2Templates(directory=templates_dir)
         app_instance.state.templates = templates
         app_instance.mount("/static", StaticFiles(directory=static_dir), name="static")
-        
+       
         # Config
-        app_instance.state.max_content_length = 20 * 1024 * 1024  # 20MB limit 
+        app_instance.state.max_content_length = 20 * 1024 * 1024 # 20MB limit
         app_instance.state.secret_key = SECRET_KEY
-        
+       
         # Ensure folders
         os.makedirs(PROJECTS_FOLDER, exist_ok=True)
-        
+       
         # Include routers (auth first; dashboard next; annotation last)
         app_instance.include_router(auth_router)
         app_instance.include_router(dashboard_router)
         app_instance.include_router(annotation_router)
-        
+       
         # Serve project files
         @app_instance.get("/projects/{filename:path}")
         async def serve_project_file(filename: str):
@@ -56,5 +53,5 @@ def create_app():
             if not os.path.exists(file_path):
                 raise HTTPException(status_code=404, detail="File not found")
             return FileResponse(file_path)
-    
+   
     return app_instance
