@@ -1,0 +1,984 @@
+{% extends "base.html" %}
+{% block title %}{{ project_name }} - Video Annotation{% endblock %}
+{% block content %}
+<style>
+main {
+    flex: 1 1 auto;
+    overflow: hidden;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "Inter", Arial, sans-serif;
+    background: #fafafa;
+    color: #aaaaaa;
+}
+
+.annotation-container {
+    display: flex;
+    height: 100vh;
+}
+
+#toast-container {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 400px;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 8px;
+    color: white;
+    font-weight: 500;
+    min-width: 300px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-100%);
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    opacity: 0;
+    animation: slideDown 0.3s ease forwards;
+    display: inline-flex; 
+    align-items: center;
+}
+
+.toast.show {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.toast.success {
+    background: linear-gradient(135deg, #4caf50, #45a049);
+}
+
+.checkmark {
+    stroke-dasharray: 50;
+    stroke-dashoffset: 50;
+    animation: drawCheck 0.5s ease-in-out forwards;
+}
+
+@keyframes drawCheck {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.toast.warning {
+    background: linear-gradient(135deg, #ff9800, #f57c00);
+}
+
+.warning-icon {
+    animation: pulseWarning 1s ease-in-out infinite;
+}
+
+@keyframes pulseWarning {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.videos-classes-wrapper {
+    width: 8%;
+    background: #ffffff;
+    border-right: 1px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.videos-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.video-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 8px;
+    transition: background 0.2s ease;
+}
+
+.video-item:hover {
+    background: #f3f6ff;
+}
+
+.video-item p {
+    margin: 0;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #333;
+}
+
+.video-item img {
+    width: 100%;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    background: #eee;
+}
+
+.video-item.selected {
+    background: #dbe7ff;
+}
+
+.classes-bottom {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 15vh;
+    background: #f9f9f9;
+    border-top: 1px solid #ddd;
+    overflow-y: auto;
+    padding: 5px;
+}
+
+.classes-bottom table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.classes-bottom td {
+    padding: 8px;
+    border: 1px solid #ccc;
+    text-align: center;
+    cursor: pointer;
+    background: #f1f1f1;
+    border-radius: 4px;
+    transition: background 0.2s ease, border 0.2s ease;
+}
+
+.classes-bottom td.selected {
+    border: 2px solid #000;
+}
+
+/* Middle Column */
+.middle-column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    height: 100%;
+}
+
+.video-canvas {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #d4e1ff;
+}
+
+.video-canvas canvas {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    border-radius: 6px;
+}
+
+/* Timeline */
+.timeline {
+    flex: none;
+    height: 15vh;
+    background: #cad7ff67;
+    border-top: 1px solid #ddd;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.timeline-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 2.5rem; /* Ensure minimum space for controls */
+    overflow: hidden;
+}
+
+.timeline-top h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.timeline-top button {
+    padding: 5px 10px;
+    font-size: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.timeline-top button:hover {
+    background: #f0f0f0;
+}
+
+#remove-segment-annotations, #remove-segment-preannotations {
+    background: #ff928b;
+    color: rgb(0, 0, 0);
+    border: 1px solid #d32f2f;
+    font-size: 0.8rem;
+    padding: 4px 8px;
+}
+
+#remove-segment-annotations:hover, #remove-segment-preannotations:hover {
+    background: #ff928b;
+}
+
+.timeline-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.timeline-frames {
+    position: relative;
+    flex: 1;
+    background: #dde2ff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.timeline-canvas {
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    display: block;
+}
+
+.playhead {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2px;
+    height: 100%;
+    background: #e53935;
+    pointer-events: none;
+}
+
+/* VFTracker Button Styles */
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+#vf-tracker-btn {
+    padding: 5px 10px;
+    margin-right: 5px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-weight: bold;
+    border: 1px solid #0056b3;
+    color: white;
+    background: linear-gradient(90deg, #007bff, #0056b3, #007bff);
+    background-size: 200% 100%;
+    animation: shimmer 3s ease-in-out infinite;
+    transition: all 0.3s ease;
+}
+
+#vf-tracker-btn:hover {
+    background: linear-gradient(90deg, #0056b3, #004085, #0056b3);
+    animation-duration: 1.5s;
+}
+
+/* Export Button Styles */
+#export-btn {
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 6px;
+    font-weight: bold;
+    border: 1px solid #28a745;
+    color: white;
+    background: linear-gradient(90deg, #28a745, #20c997);
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+}
+
+#export-btn:hover {
+    background: linear-gradient(90deg, #20c997, #28a745);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+}
+
+#tracker-modal > div {
+  background: white;
+  margin: 5% auto;
+  padding: 40px;
+  border: none;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 70%;
+  height: 70%;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#tracker-modal h2 {
+  margin: 0 0 30px;
+  text-align: center;
+  color: #2c3e50;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+#tracker-modal h3 {
+  margin: 0 0 20px;
+  text-align: center;
+  color: #34495e;
+  font-size: 1.3rem;
+}
+
+#tracker-modal label {
+  font-weight: 600;
+  color: #444;
+  margin-top: 20px;
+  display: block;
+  font-size: 1rem;
+}
+
+.warning {
+  background: #fff3cd;
+  border: 1px solid #ffeaa7;
+  color: #856404;
+  padding: 12px;
+  border-radius: 6px;
+  margin: 10px 0;
+}
+
+.checkbox-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.checkbox-wrapper input[type="checkbox"] {
+  transform: scale(1.2);
+  accent-color: #007bff;
+}
+
+.options-grid, .device-grid {
+  display: grid;
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.options-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+#sam-models {
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(2, auto);
+}
+
+.device-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.option-btn {
+  padding: 12px 8px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  background: #fafafa;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #555;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.option-btn:hover {
+  border-color: #007bff;
+  background: #f0f8ff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.1);
+}
+
+.option-btn.selected {
+  border-color: #007bff;
+  background: #e3f2fd;
+  color: #0056b3;
+}
+
+.option-btn small {
+  font-size: 0.75rem;
+  opacity: 0.8;
+  margin-top: 4px;
+  display: block;
+}
+
+#tracker-modal button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  font-size: 1rem;
+}
+
+#cancel-tracking {
+  background: #dc3545;
+  color: white;
+}
+
+#cancel-tracking:hover {
+  background: #c82333;
+}
+
+#start-tracking, #next-step {
+  background: #007bff;
+  color: white;
+}
+
+#start-tracking:hover, #next-step:hover {
+  background: #0056b3;
+}
+
+#prev-step {
+  background: #6c757d;
+  color: white;
+}
+
+#prev-step:hover {
+  background: #545b62;
+}
+
+/* Right Controls */
+.right-controls {
+    width: 64px;
+    background: #ffffff;
+    border-left: 1px solid #ddd;
+    padding: 10px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.control-btn {
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: #f1f1f1;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.control-btn:hover {
+    background: #e0e0e0;
+    transform: translateY(-2px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.control-btn img {
+    width: 22px;
+    height: 22px;
+}
+
+.control-btn.selected {
+    background: #4caf50;
+    color: #fff;
+}
+
+.method-option.selected {
+  border: 2px solid #007bff !important;
+  background-color: #f8f9fa;
+}
+
+.method-option:hover {
+  background-color: #f8f9fa;
+}
+
+/* Modal Modern Styles */
+#tracker-modal, #export-modal {
+  display: none;
+  position: fixed;
+  z-index: 100;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+#tracker-modal > div, #export-modal > div {
+  background: white;
+  margin: 5% auto;
+  padding: 40px;
+  border: none;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 70%;
+  height: 70%;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#export-modal h2 {
+  margin: 0 0 30px;
+  text-align: center;
+  color: #2c3e50;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+#export-modal h3 {
+  margin: 0 0 20px;
+  text-align: center;
+  color: #34495e;
+  font-size: 1.3rem;
+}
+
+#export-modal label {
+  font-weight: 600;
+  color: #444;
+  margin-top: 20px;
+  display: block;
+  font-size: 1rem;
+}
+
+.checkbox-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.checkbox-wrapper input[type="checkbox"] {
+  transform: scale(1.2);
+  accent-color: #007bff;
+}
+
+.videos-checkboxes {
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 10px 0;
+}
+
+.video-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  margin-bottom: 5px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.video-checkbox-item:hover {
+  background: #f8f9fa;
+}
+
+.video-checkbox-item input[type="checkbox"] {
+  margin: 0;
+}
+
+.options-grid {
+  display: grid;
+  gap: 12px;
+  margin: 10px 0;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.format-option {
+  padding: 12px 8px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  background: #fafafa;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #555;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.format-option img {
+  width: 50%;
+  height: auto;
+}
+
+.format-option:hover {
+  border-color: #007bff;
+  background: #f0f8ff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.1);
+}
+
+.format-option.selected {
+  border-color: #007bff;
+  background: #e3f2fd;
+  color: #0056b3;
+}
+
+#export-modal button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  font-size: 1rem;
+}
+
+#export-cancel {
+  background: #dc3545;
+  color: white;
+}
+
+#export-cancel:hover {
+  background: #c82333;
+}
+
+#export-start {
+  background: #007bff;
+  color: white;
+}
+
+#export-start:hover {
+  background: #0056b3;
+}
+
+#confirm-modal .confirm-content {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-50%) scale(0.95); }
+  to { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
+#confirm-modal .confirm-buttons button:hover {
+  opacity: 0.9;
+}
+
+#confirm-cancel:hover {
+  background: #e9ecef;
+}
+
+#confirm-yes:hover {
+  background: #c82333;
+}
+
+</style>
+<div class="annotation-container">
+    <div id="loading-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); display: none; align-items: center; justify-content: center; z-index: 10; flex-direction: column; gap: 10px;">
+        <div style="font-size: 1.2rem; color: #333;">Loading Video...</div>
+        <div id="progress-bar" style="width: 200px; height: 4px; background: #ddd; border-radius: 2px; overflow: hidden;">
+            <div id="progress-fill" style="height: 100%; background: #4caf50; width: 0%; transition: width 0.3s ease;"></div>
+        </div>
+        <p id="loading-status" style="font-size: 0.9rem; color: #666;">Fetching frames...</p>
+    </div>    
+    <!-- Left Column: Videos + Classes -->
+    <div class="videos-classes-wrapper">
+        <div class="videos-list">
+            {% for video in videos %}
+                <div class="video-item" data-url="{{ video.url }}" data-video-id="{{ video.id }}" data-video-path="{{ video.absolute_path }}">
+                    <p>{{ video.id }}</p>
+                    <img src="" alt="First frame of {{ video.filename }}" data-video-url="{{ video.url }}">
+                </div>
+            {% endfor %}
+        </div>
+        <div class="classes-bottom">
+            <table>
+                {% for cls in classes %}
+                    <tr>
+                        <td>{{ cls }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+
+    <!-- Middle Column -->
+    <div class="middle-column">
+        <!-- Video Canvas -->
+        <div class="video-canvas">
+            <canvas id="video-canvas"></canvas>
+        </div>
+        <!-- Timeline -->
+        <div class="timeline">
+            <div class="timeline-top">
+                <div class="video-info">
+                    <h3 id="video-name"></h3>
+                    <span id="frame-count"></span>
+                </div>
+                <div class="timeline-controls">
+                    <button id="export-btn">Export</button>
+                    <button id="vf-tracker-btn">VFTracker</button>
+                    <button id="first-frame">&lt;&lt;</button>
+                    <button id="prev-frame">|&lt;</button>
+                    <button id="play-pause">&#9654;</button>
+                    <button id="next-frame">&gt;|</button>
+                    <button id="last-frame">&gt;&gt;</button>
+                    <button id="loop-btn" title="Toggle Loop">&#128257;</button>
+                    <button id="remove-segment-annotations" title="Remove Segment Annotations">🗑️ Annotations</button>
+                    <button id="remove-segment-preannotations" title="Remove Segment Preannotations">🗑️ Preannotations</button>
+                </div>
+                <input type="text" id="current-time" size="8" readonly>
+            </div>
+            <div class="timeline-frames">
+                <canvas id="timeline-canvas"></canvas>
+                <div class="playhead" id="playhead"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="right-controls">
+        {% if setup_type != 'Video Segmentation' %}
+            <button class="control-btn" id="rect-mode" title="Draw Rectangle"><img src="/static/img/logos/rect-mode.svg"></button>
+        {% endif %}
+        {% if setup_type != 'Video Detection' %}
+            <button class="control-btn" id="polygon-mode" title="Draw Polygon"><img src="/static/img/logos/polygon-mode.svg"></button>
+        {% endif %}
+        <!-- <button class="control-btn" id="magic-mode" title="One Click Annotation"><img src="/static/img/logos/magic-mode.svg"></button> -->
+        <button class="control-btn" id="select-mode" title="Select Labels"><img src="/static/img/logos/select-mode.svg"></button>
+        <button class="control-btn" id="undo-btn" title="Undo"><img src="/static/img/logos/undo-btn.svg"></button>
+        <button class="control-btn" id="delete-btn" title="Delete"><img src="/static/img/logos/delete-btn.svg"></button>
+        <button class="control-btn" id="duplicate-btn" title="Duplicate"><img src="/static/img/logos/duplicate-btn.svg"></button>
+        <button class="control-btn" id="grid-btn" title="Toggle Grid"><img src="/static/img/logos/grid-btn.svg"></button>
+        <button class="control-btn" id="reset-view" title="Reset View"><img src="/static/img/logos/reset-view.svg"></button>
+        <button class="control-btn" id="zoom-in-btn" title="Zoom In"><img src="/static/img/logos/zoom-in-btn.svg"></button>
+        <button class="control-btn" id="zoom-out-btn" title="Zoom Out"><img src="/static/img/logos/zoom-out-btn.svg"></button>
+        <button class="control-btn" id="save-btn" style="background: rgba(5, 168, 46, 0.8);" title="Save"><img src="/static/img/logos/save-btn.svg"></button>
+        <button class="control-btn" id="prev-video-btn" title="Prev Video"><img src="/static/img/logos/prev-image-btn.svg"></button>
+        <button class="control-btn" id="next-video-btn" title="Next Video"><img src="/static/img/logos/next-image-btn.svg"></button>
+    </div>
+</div>
+<div id="toast-container"></div>
+<div id="tracker-modal">
+  <div>
+    <h2>Configure VFTracker</h2>
+    
+    <!-- Step 1: Method Selection -->
+    <div id="step1" style="flex:1; display:flex; flex-direction:column;">
+      <h3>Select Tracking Method</h3>
+      <div style="display:flex; justify-content:space-around; margin:20px 0;">
+        <div class="method-option" data-method="cv2" style="width:30%; padding:15px; border:2px solid #ccc; border-radius:8px; text-align:center; cursor:pointer;">
+          <img src="/static/img/opencv_logo.png" style="width:100%; height:auto;">
+          <h4>OpenCV Tracker</h4>
+          <p>Fast tracking using traditional computer vision</p>
+        </div>
+        <div class="method-option" data-method="interpolate" style="width:30%; padding:15px; border:2px solid #ccc; border-radius:8px; text-align:center; cursor:pointer;">
+          <img src="/static/img/interpolate_logo.gif" style="width:100%; height:auto;">
+          <h4>Interpolation</h4>
+          <p>Simple interpolation between keyframes</p>
+        </div>
+        <div class="method-option" data-method="sam2" style="width:30%; padding:15px; border:2px solid #ccc; border-radius:8px; text-align:center; cursor:pointer;">
+          <img src="/static/img/sam2_logo.png" style="width:100%; height:auto;">
+          <h4>Smart Propagator</h4>
+          <p>Advanced AI-powered segmentation</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Configuration -->
+    <div id="step2" style="flex:1; display:none; flex-direction:column; overflow-y:auto;">
+      <!-- OpenCV Options -->
+      <div id="cv2-config" style="display:none;">
+        <h3>OpenCV Tracker Configuration</h3>
+        <div class="checkbox-wrapper">
+          <input type="checkbox" id="use-keyframes">
+          <label for="use-keyframes">Use Keyframes (interpolate between annotated frames)</label>
+        </div>
+        <label>Tracker Type:</label>
+        <div class="options-grid" id="tracker-types">
+          <div class="option-btn selected" data-value="csrt">CSRT<small>(accurate)</small></div>
+          <div class="option-btn" data-value="kcf">KCF<small>(fast)</small></div>
+          <div class="option-btn" data-value="mil">MIL<small>(medium)</small></div>
+          <div class="option-btn" data-value="boosting">Boosting<small>(robust)</small></div>
+          <div class="option-btn" data-value="medianflow">MedianFlow<small>(smooth)</small></div>
+          <div class="option-btn" data-value="tld">TLD<small>(long-term)</small></div>
+          <div class="option-btn" data-value="mosse">MOSSE<small>(very fast)</small></div>
+        </div>
+      </div>
+
+      <!-- Interpolation Options -->
+      <div id="interpolate-config" style="display:none;">
+        <h3>Interpolation Configuration</h3>
+        <p class="warning">
+          ⚠️ Make sure there are no sudden view switches in the selected range for best results.
+        </p>
+      </div>
+
+      <!-- SAM2 Options -->
+      <div id="sam2-config" style="display:none;">
+        <h3>Smart Propagator Configuration</h3>
+        <p class="warning">
+          ⚠️ This method is computationally heavy and may take longer to process.
+        </p>
+        
+        <label>Device:</label>
+        <div class="device-grid" id="device-types">
+          <div class="option-btn selected" data-value="cuda">GPU (CUDA)<small>🚀 Faster</small></div>
+          <div class="option-btn" data-value="cpu">CPU<small>📱 Portable</small></div>
+        </div>
+        
+        <label>SAM Model:</label>
+        <div class="options-grid" id="sam-models">
+          <div class="option-btn selected" data-value="sam2.1_t.pt">SAM 2.1 Tiny<small>Fastest</small></div>
+          <div class="option-btn" data-value="sam2.1_s.pt">SAM 2.1 Small<small>Balanced</small></div>
+          <div class="option-btn" data-value="sam2.1_b.pt">SAM 2.1 Base<small>Good quality</small></div>
+          <div class="option-btn" data-value="sam2.1_l.pt">SAM 2.1 Large<small>Best quality</small></div>
+          <div class="option-btn" data-value="sam2_t.pt">SAM 2 Tiny<small>Fastest</small></div>
+          <div class="option-btn" data-value="sam2_s.pt">SAM 2 Small<small>Balanced</small></div>
+          <div class="option-btn" data-value="sam2_b.pt">SAM 2 Base<small>Good quality</small></div>
+          <div class="option-btn" data-value="sam2_l.pt">SAM 2 Large<small>Best quality</small></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Buttons -->
+    <div style="display:flex; justify-content:space-between; margin-top:20px;">
+        <button id="cancel-tracking">Cancel</button>
+        <button id="start-tracking" style="display:none;">Start Tracking</button>
+        <button id="prev-step" style="padding:12px 24px; background:#6c757d; color:white; border:none; cursor:pointer; border-radius:8px; display:none;">Previous</button>
+        <button id="next-step">Next</button>
+    </div>
+  </div>
+</div>
+
+<div id="export-modal">
+  <div>
+    <h2>Export Annotations</h2>
+    <div id="export-content" style="flex:1; display:flex; flex-direction:column; overflow-y:auto;">
+      <h3 id="export-title">
+        {% if 'Detection' in setup_type %}
+          Export Detection Annotations
+        {% else %}
+          Export Segmentation Annotations
+        {% endif %}
+      </h3>
+      <div id="videos-section" style="display: block;">
+        <label>Select Videos:</label>
+        <div class="videos-checkboxes" id="videos-checkboxes">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+      <!-- <div class="checkbox-wrapper" id="frames-checkbox" style="display: block;">
+        <input type="checkbox" id="extract-frames">
+        <label for="extract-frames">Export Individual Frames</label>
+      </div>
+      <div id="semantic-checkbox" style="display: {% if 'Segmentation' in setup_type %}block{% else %}none{% endif %}">
+        <div class="checkbox-wrapper">
+          <input type="checkbox" id="semantic-mask">
+          <label for="semantic-mask">Semantic Masks (Class-based)</label>
+        </div>
+      </div> -->
+      <label id="format-label" style="display: block;">Select Format:</label>
+      <div class="options-grid" id="format-options">
+        {% if 'Detection' in setup_type %}
+          <div class="format-option" data-value="COCO_VIDEO">
+            <img src="/static/img/coco_logo.png" alt="COCO">
+            <span>COCO</span>
+          </div>
+          <div class="format-option" data-value="MOT">
+            <img src="/static/img/csv_logo.png" alt="MOT">
+            <span>MOT</span>
+          </div>
+        {% elif 'Segmentation' in setup_type %}
+          <div class="format-option" data-value="COCO_SEG_VIDEO">
+            <img src="/static/img/coco_logo.png" alt="COCO">
+            <span>COCO</span>
+          </div>
+          <div class="format-option" data-value="MASK_SEQUENCE">
+            <img src="/static/img/mask_logo.gif" alt="Mask Sequence">
+            <span>Mask Sequence</span>
+          </div>
+          <div class="format-option" data-value="MASK_VIDEO">
+            <img src="/static/img/mask_video.gif" alt="Mask Video">
+            <span>Mask Video</span>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+    <div style="display:flex; justify-content:flex-end; margin-top:20px; gap:10px;">
+      <button id="export-cancel">Cancel</button>
+      <button id="export-start">Export</button>
+    </div>
+  </div>
+</div>
+
+<div id="confirm-modal" style="display: none; position: fixed; z-index: 1001; background: rgba(0,0,0,0.5); top: 0; left: 0; width: 100%; height: 100%;">
+  <div class="confirm-content" style="background: white; border-radius: 12px; padding: 24px; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); position: relative; margin: 0 auto; top: 50%; transform: translateY(-50%);">
+    <p id="confirm-message" style="margin: 0 0 20px; font-size: 1.1rem; color: #333; line-height: 1.4;"></p>
+    <div class="confirm-buttons" style="display: flex; gap: 12px; justify-content: flex-end;">
+      <button id="confirm-cancel" style="padding: 8px 16px; border: 1px solid #ccc; background: #f8f9fa; border-radius: 6px; cursor: pointer; font-size: 0.95rem;">Cancel</button>
+      <button id="confirm-yes" style="padding: 8px 16px; border: none; background: #dc3545; color: white; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-weight: 500;">Yes, Remove</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/static/js/main_video.js"></script>
+<script>
+document.addEventListener('wheel', function(event) {
+    if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+    }
+}, { passive: false }); 
+</script>
+<script id="app-config" type="application/json" data-current-user-avatar="{{ current_user_avatar }}">
+    {
+        "setupType": "{{ setup_type }}",
+        "projectName": "{{ project_name }}",
+        "classes": {{ classes|tojson }}
+    }
+</script>
+{% endblock %}
