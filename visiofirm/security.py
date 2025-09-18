@@ -1,3 +1,4 @@
+#visiofirm/security.py
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
@@ -18,7 +19,7 @@ def get_or_create_secret_key():
             return f.read().decode('utf-8').strip()
     else:
         # Generate a new 32-byte (256-bit) random key
-        secret_key = secrets.token_hex(32)  # Or os.urandom(32).hex()
+        secret_key = secrets.token_hex(32)  
         with open(secret_file, 'w') as f:
             f.write(secret_key)
         os.chmod(secret_file, 0o600)  # Restrict permissions (user-read/write only)
@@ -60,7 +61,7 @@ async def get_current_user(token: str = Depends(security)) -> User:
     user_data = get_user_by_id(int(user_id))
     if user_data is None:
         raise credentials_exception
-    return User(user_data[0], user_data[1], user_data[3], user_data[4], user_data[5], user_data[6])
+    return User(user_data[0], user_data[1], user_data[3], user_data[4], user_data[5], user_data[6], user_data[7]) 
 
 # Cookie-based for web forms (alternative to header for browser sessions)
 async def get_current_user_from_cookie(request: Request) -> User:
@@ -77,4 +78,4 @@ async def get_current_user_from_cookie(request: Request) -> User:
     user_data = get_user_by_id(int(user_id))
     if user_data is None:
         raise HTTPException(status_code=401, detail="User not found")
-    return User(user_data[0], user_data[1], user_data[3], user_data[4], user_data[5], user_data[6])
+    return User(user_data[0], user_data[1], user_data[3], user_data[4], user_data[5], user_data[6], user_data[7]) 
