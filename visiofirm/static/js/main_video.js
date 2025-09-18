@@ -425,105 +425,188 @@ document.addEventListener('DOMContentLoaded', async () => {
         nextVideoBtn.addEventListener('click', () => navigateVideo(1));
     }
 
+    function getFilenameFromHeaders(headers) {
+        const disposition = headers.get('Content-Disposition');
+        if (disposition && disposition.includes('filename=')) {
+            const filenameMatch = disposition.match(/filename[^;=\s]*=['"]?([^'"\s;]+)/);
+            return filenameMatch ? filenameMatch[1] : null;
+        }
+        return null;
+    }
+
     // Export Modal Setup
     const exportModal = document.getElementById('export-modal');
-const exportContent = document.getElementById('export-content');
-const exportTitle = document.getElementById('export-title');
-const videosSection = document.getElementById('videos-section');
-const videosCheckboxes = document.getElementById('videos-checkboxes');
-const framesCheckbox = document.getElementById('frames-checkbox');
-const semanticCheckbox = document.getElementById('semantic-checkbox');
-const formatLabel = document.getElementById('format-label');
-const formatOptions = document.getElementById('format-options');
-const exportCancel = document.getElementById('export-cancel');
-const exportStart = document.getElementById('export-start');
+    // const exportContent = document.getElementById('export-content');
+    // const exportTitle = document.getElementById('export-title');
+    // const videosSection = document.getElementById('videos-section');
+    const videosCheckboxes = document.getElementById('videos-checkboxes');
+    // const framesCheckbox = document.getElementById('frames-checkbox');
+    // const semanticCheckbox = document.getElementById('semantic-checkbox');
+    // const formatLabel = document.getElementById('format-label');
+    // const formatOptions = document.getElementById('format-options');
+    const exportCancel = document.getElementById('export-cancel');
+    const exportStart = document.getElementById('export-start');
 
-let selectedFormat = null;
+    let selectedFormat = null;
 
-function resetExportModal() {
-    videosCheckboxes.innerHTML = '';
-    selectedFormat = null;
-    document.querySelectorAll('.format-option').forEach(opt => {
-        opt.classList.remove('selected');
-    });
-    // Add click listeners to format options
-    document.querySelectorAll('#format-options .format-option').forEach(div => {
-        div.addEventListener('click', () => {
-            document.querySelectorAll('.format-option').forEach(opt => opt.classList.remove('selected'));
-            div.classList.add('selected');
-            selectedFormat = div.dataset.value;
+    function resetExportModal() {
+        videosCheckboxes.innerHTML = '';
+        selectedFormat = null;
+        document.querySelectorAll('.format-option').forEach(opt => {
+            opt.classList.remove('selected');
         });
-    });
-    // Populate videos checkboxes
-    Array.from(videoItems).forEach(item => {
-        const checkbox = document.createElement('div');
-        checkbox.className = 'video-checkbox-item';
-        checkbox.innerHTML = `
-            <input type="checkbox" value="${item.dataset.videoPath}" id="video-${item.dataset.videoId}">
-            <label for="video-${item.dataset.videoId}">${item.querySelector('p').textContent}</label>
-        `;
-        videosCheckboxes.appendChild(checkbox);
-        const input = checkbox.querySelector('input');
-        if (input) input.checked = true;
-    });
-}
-
-if (exportBtn) {
-    exportBtn.addEventListener('click', () => {
-        resetExportModal();
-        if (exportModal) exportModal.style.display = 'block';
-    });
-}
-
-if (exportCancel) {
-    exportCancel.addEventListener('click', () => {
-        if (exportModal) exportModal.style.display = 'none';
-    });
-}
-
-if (exportStart) {
-    exportStart.addEventListener('click', async () => {
-        if (!selectedFormat) {
-            showToast('Please select a format.', 'warning');
-            return;
-        }
-        const selectedVideos = Array.from(videosCheckboxes.querySelectorAll('input:checked')).map(cb => cb.value);
-        if (selectedVideos.length === 0) {
-            showToast('Please select at least one video.', 'warning');
-            return;
-        }
-        const extractFrames = document.getElementById('extract-frames')?.checked || false;
-        const semantic = document.getElementById('semantic-mask')?.checked || false;
-        try {
-            const response = await fetch(`/annotation/export/${projectName}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    format: selectedFormat,
-                    videos: selectedVideos,
-                    extract_frames: extractFrames,
-                    semantic: semantic
-                })
+        // Add click listeners to format options
+        document.querySelectorAll('#format-options .format-option').forEach(div => {
+            div.addEventListener('click', () => {
+                document.querySelectorAll('.format-option').forEach(opt => opt.classList.remove('selected'));
+                div.classList.add('selected');
+                selectedFormat = div.dataset.value;
             });
-            if (!response.ok) throw new Error('Export failed');
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${projectName}_${selectedFormat}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            showToast('Export completed successfully!', 'success');
-            if (exportModal) exportModal.style.display = 'none';
-        } catch (e) {
-            console.error('Export error:', e);
-            showToast('Export failed: ' + e.message, 'error');
-        }
-    });
-}
+        });
+        // Populate videos checkboxes
+        Array.from(videoItems).forEach(item => {
+            const checkbox = document.createElement('div');
+            checkbox.className = 'video-checkbox-item';
+            const videoId = item.dataset.videoPath || item.dataset.videoId || item.dataset.url.split('/').pop();  // Fallback to filename if needed
+            checkbox.innerHTML = `
+                <input type="checkbox" value="${videoId}" id="video-${item.dataset.videoId}">
+                <label for="video-${item.dataset.videoId}">${item.querySelector('p').textContent}</label>
+            `;
+            videosCheckboxes.appendChild(checkbox);
+            const input = checkbox.querySelector('input');
+            if (input) input.checked = true;
+        });
+        // Reset path input and checkboxes
+        const exportPathInput = document.getElementById('export-path');
+        if (exportPathInput) exportPathInput.value = '';
+        const localExportCheckbox = document.getElementById('local-export');
+        if (localExportCheckbox) localExportCheckbox.checked = false;
+        const extractFramesCheckbox = document.getElementById('extract-frames');
+        if (extractFramesCheckbox) extractFramesCheckbox.checked = false;
+    }
 
+    if (exportBtn) {
+        exportBtn.addEventListener('click', () => {
+            resetExportModal();
+            if (exportModal) exportModal.style.display = 'block';
+        });
+    }
+
+    if (exportCancel) {
+        exportCancel.addEventListener('click', () => {
+            if (exportModal) exportModal.style.display = 'none';
+        });
+    }
+
+    if (exportStart) {
+        exportStart.addEventListener('click', async () => {
+            // validation
+            if (!selectedFormat) {
+                showToast('Please select a format.', 'warning');
+                return;
+            }
+            if (!videosCheckboxes) {
+                showToast('No videos available to export.', 'warning');
+                return;
+            }
+            const selectedVideos = Array.from(videosCheckboxes.querySelectorAll('input:checked'))
+                .map(cb => cb.value.trim())  // NEW: Trim whitespace
+                .filter(v => v);  // NEW: Filter empty/invalid paths
+            if (selectedVideos.length === 0) {
+                showToast('Please select at least one video.', 'warning');
+                return;
+            }
+
+            const extractFrames = document.getElementById('extract-frames')?.checked || false;
+            const semantic = document.getElementById('semantic-mask')?.checked || false;
+            const localExport = document.getElementById('local-export')?.checked || false;
+            let exportPath = '/tmp';
+            if (localExport) {
+                const pathInput = document.getElementById('export-path');
+                if (!pathInput || !pathInput.value.trim()) {
+                    showToast('Please enter a local path for export.', 'warning');
+                    return;
+                }
+                exportPath = pathInput.value.trim();
+                // Basic client-side heuristic to avoid obvious client-side paths
+                if (exportPath.startsWith('C:\\') || exportPath.startsWith('/Users/') || exportPath.includes('Downloads')) {
+                    showToast('Path appears to be client-side; use a server-accessible directory (e.g., /home/user/exports).', 'warning');
+                    return;
+                }
+                console.log(`sending local path ${exportPath} to backend`);
+            }
+
+            const payload = {
+                format: selectedFormat,
+                videos: selectedVideos,  // Now filtered
+                extract_frames: extractFrames,
+                semantic: semantic,
+                export_path: exportPath,
+                local_export: localExport
+            };
+            console.log('Export payload:', payload);
+
+            try {
+                const resp = await fetch(`/annotation/export/${encodeURIComponent(projectName)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                console.log('Export response status:', resp.status);
+                console.log('Export response headers:', Object.fromEntries(resp.headers.entries()));
+
+                if (!resp.ok) {
+                    let errText = 'Export failed';
+                    // FIXED: Check if body already read (e.g., after failed json)
+                    if (!resp.bodyUsed) {
+                        try {
+                            const j = await resp.json();
+                            errText = j.detail || j.error || JSON.stringify(j);
+                        } catch (_e) {
+                            try {
+                                errText = await resp.text();
+                            } catch (_) {
+                                errText = `HTTP ${resp.status}`;
+                            }
+                        }
+                    }
+                    throw new Error(errText);
+                }
+
+                // Success handling
+                if (localExport) {
+                    // FIXED: Force JSON for local (ignore content-type; assume backend sends JSON)
+                    const data = await resp.json();
+                    console.log('Local export data:', data);
+                    if (data.success) {
+                        showToast(`Export saved to: ${data.saved_path}`, 'success');
+                    } else {
+                        throw new Error(data.error || 'Export failed');
+                    }
+                } else {
+                    // Non-local: download blob
+                    const filename = getFilenameFromHeaders(resp.headers) || `${projectName}_${selectedFormat}.zip`;
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    showToast('Export completed successfully!', 'success');
+                }
+
+                if (exportModal) exportModal.style.display = 'none';
+            } catch (e) {
+                console.error('Export error:', e);
+                showToast('Export failed: ' + (e.message || e), 'error');
+            }
+        });
+    }
+    
     function handleSegmentRemoval(button, endpoint, action, confirmMsg) {
         if (!globals.selectedRange) {
             showToast('Please select a range on the timeline first.', 'warning');
@@ -1924,22 +2007,29 @@ if (exportStart) {
     }
 
     document.addEventListener('keydown', (e) => {
-        // Prevent default for space to avoid scrolling
-        if (e.key === ' ') {
-            e.preventDefault();
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+            return; // don't intercept when user types in form fields
         }
 
-        // Ctrl+C: Copy selected annotation to buffer
-        if (e.ctrlKey && e.key.toLowerCase() === 'c' && globals.selectedAnnotation) {
+        // Prevent spacebar scrolling only when not focused on form element
+        if (e.key === ' ') {
             e.preventDefault();
-            globals.copyBuffer = JSON.parse(JSON.stringify(globals.selectedAnnotation));
+            resetView();
+            return;
+        }
+
+        // Ctrl+C: copy selected annotation
+        if (e.ctrlKey && e.key && e.key.toLowerCase() === 'c' && globals?.selectedAnnotation) {
+            e.preventDefault();
+            globals.copyBuffer = (typeof structuredClone === 'function') ? structuredClone(globals.selectedAnnotation) : JSON.parse(JSON.stringify(globals.selectedAnnotation));
             console.log('Annotation copied to buffer');
         }
 
-        // Ctrl+V: Paste from buffer to current frame
-        if (e.ctrlKey && e.key.toLowerCase() === 'v' && globals.copyBuffer) {
+        // Ctrl+V: paste annotation
+        if (e.ctrlKey && e.key && e.key.toLowerCase() === 'v' && globals?.copyBuffer) {
             e.preventDefault();
-            const paste = JSON.parse(JSON.stringify(globals.copyBuffer));
+            const paste = (typeof structuredClone === 'function') ? structuredClone(globals.copyBuffer) : JSON.parse(JSON.stringify(globals.copyBuffer));
             globals.annotations.push(paste);
             pushToUndoStack();
             drawImage();
@@ -1947,8 +2037,8 @@ if (exportStart) {
             console.log('Annotation pasted');
         }
 
-        // Delete: Delete selected annotation (same as deleteBtn)
-        if (e.key === 'Delete' && globals.selectedAnnotation) {
+        // Delete: delete selected annotation
+        if (e.key === 'Delete' && globals?.selectedAnnotation) {
             e.preventDefault();
             const index = globals.annotations.indexOf(globals.selectedAnnotation);
             if (index > -1) {
@@ -1960,40 +2050,35 @@ if (exportStart) {
             }
         }
 
-        // Ctrl+Z: Undo (same as undoBtn)
-        if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+        // Ctrl+Z: undo
+        if (e.ctrlKey && e.key && e.key.toLowerCase() === 'z') {
             e.preventDefault();
-            if (globals.undoStack[globals.currentFrameIndex]?.length > 0) {
-                globals.annotations = globals.undoStack[globals.currentFrameIndex].pop();
+            const frameStack = globals.undoStack[globals.currentFrameIndex];
+            if (Array.isArray(frameStack) && frameStack.length > 0) {
+                // pop previous state and set annotations to it
+                globals.annotations = frameStack.pop();
                 drawImage();
                 updateMapAndTimeline();
             }
         }
 
-        // Space: Reset view (same as resetViewBtn)
-        if (e.key === ' ') {
-            e.preventDefault();
-            resetView();
-        }
-
-        // Ctrl+S: Save (same as saveBtn)
-        if (e.ctrlKey && e.key.toLowerCase() === 's') {
+        // Ctrl+S: save shortcut
+        if (e.ctrlKey && e.key && e.key.toLowerCase() === 's') {
             e.preventDefault();
             if (saveBtn) saveBtn.click();
         }
 
-        // Left/Right arrow: Navigate videos (same as prev/next video buttons)
+        // Left/Right arrow navigation
         if (e.key === 'ArrowLeft') {
             e.preventDefault();
             if (prevVideoBtn) prevVideoBtn.click();
-        }
-        if (e.key === 'ArrowRight') {
+        } else if (e.key === 'ArrowRight') {
             e.preventDefault();
             if (nextVideoBtn) nextVideoBtn.click();
         }
 
-        // G: Toggle grid (same as gridBtn)
-        if (e.key.toLowerCase() === 'g') {
+        // G: toggle grid
+        if (e.key && e.key.toLowerCase() === 'g') {
             e.preventDefault();
             setGridEnabled(!globals.gridEnabled);
         }
