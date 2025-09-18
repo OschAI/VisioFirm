@@ -32,11 +32,11 @@ def main():
 WELCOME TO
  _   _ _____ _____ _____ ____  _____ _____ _____ 
  __      ___     _       ______ _                
- \ \    / (_)   (_)     |  ____(_)               
-  \ \  / / _ ___ _  ___ | |__   _ _ __ _ __ ___  
-   \ \/ / | / __| |/ _ \|  __| | | '__| '_ ` _ \ 
-    \  /  | \__ \ | (_) | |    | | |  | | | | | |
-     \/   |_|___/_|\___/|_|    |_|_|  |_| |_| |_|                          
+  \ \    / (_)   (_)     |  ____(_)               
+   \ \  / / _ ___ _  ___ | |__   _ _ __ _ __ ___  
+    \ \/ / | / __| |/ _ \|  __| | | '__| '_ ` _ \ 
+     \  /  | \__ \ | (_) | |    | | |  | | | | | |
+      \/   |_|___/_|\___/|_|    |_|_|  |_| |_| |_|                          
 
 You are currently running the version:
 VisioFirm v{}
@@ -55,8 +55,14 @@ Stay updated by visiting our GitHub Repository https://github.com/OschAI/VisioFi
     
     threading.Timer(1.5, lambda: webbrowser.open(url)).start()
     
-    # threads = max(4, multiprocessing.cpu_count() * 2)
-    config = uvicorn.Config(app=app, host="localhost", port=port, access_log=False, log_level="info", reload=False)
+    config = uvicorn.Config(
+        app=app, 
+        host="localhost", 
+        port=port, 
+        access_log=False, 
+        log_level="info", 
+        reload=False 
+    )
     server = uvicorn.Server(config)
     server.run()
 
