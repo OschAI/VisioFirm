@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status, Request  # FIXED: Add Request here
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from visiofirm.config import PROJECTS_FOLDER
 from visiofirm.models.user import init_db
@@ -9,8 +9,10 @@ from visiofirm.routes.auth import router as auth_router
 from visiofirm.routes.dashboard import router as dashboard_router
 from visiofirm.routes.annotation import router as annotation_router
 from visiofirm.routes.importer import router as import_router
-import os
 from visiofirm.security import SECRET_KEY
+from visiofirm.models.user import User
+from visiofirm.routes.dashboard import get_current_user_optional
+import os
 
 app_instance = None
 
@@ -19,6 +21,7 @@ async def lifespan(app: FastAPI):
     # Startup
     init_db()
     yield
+
 def create_app():
     global app_instance
     if app_instance is None:
@@ -49,6 +52,13 @@ def create_app():
         app_instance.include_router(dashboard_router)
         app_instance.include_router(import_router)
         app_instance.include_router(annotation_router)
+       
+        # FIXED: Type the 'request' param as Request to inject the HTTP Request object
+        @app_instance.get("/")
+        async def root(request: Request, current_user: User | None = Depends(get_current_user_optional)):
+            if current_user:
+                return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(url="/auth/login", status_code=status.HTTP_303_SEE_OTHER)
        
         # Serve project files
         @app_instance.get("/projects/{filename:path}")
