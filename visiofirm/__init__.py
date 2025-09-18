@@ -10,6 +10,9 @@ from .projects import (
     process_local_data_path,
     extract_archive
 )
+from .auth_client import (
+    login
+)
 
 from .preannotator import VFPreAnnotator
 from .blindtrust import VFBlindTrust
