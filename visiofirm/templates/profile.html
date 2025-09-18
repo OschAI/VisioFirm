@@ -151,6 +151,12 @@
     <div class="profile-header">
         <h1>Your Profile</h1>
         <p class="user-id"><strong>User ID:</strong> {{ user.id }}</p>
+        <div id="api-key-section" style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #007bff;">
+            <label for="api_key" style="display: block; font-weight: bold; margin-bottom: 5px;">API Key (for Python API)</label>
+            <input id="api_key" type="text" value="{{ user.api_key or 'Generate first API key' }}" readonly style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; background: #fff;">
+            <button id="regen-btn" style="margin-top: 10px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate API Key</button>
+            <p style="font-size: 0.9em; color: #6c757d; margin-top: 5px;">Copy this key for use in Python scripts (e.g., VF.login('your@email.com', 'your_api_key_here')). Regenerating invalidates the old one.</p>
+        </div>
         <div class="avatar">
             {{ user.first_name[0]|upper }}.{{ user.last_name[0]|upper }}
         </div>
@@ -176,7 +182,45 @@
             <label for="company">Company</label>
             <input id="company" name="company" type="text" value="{{ user.company or '' }}" placeholder="Company">
         </div>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="regenerate_api_key"> Regenerate API Key on Save
+            </label>
+        </div>
         <button type="submit" class="save-btn">Save Changes</button>
     </form>
 </div>
+<script>
+fetch('/auth/profile_data')
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      const apiInput = document.getElementById('api_key');
+      apiInput.value = data.api_key || 'No API key generated';
+      apiInput.readOnly = true;
+    }
+  })
+  .catch(error => {
+    console.error('Error loading profile data:', error);
+  });
+
+document.getElementById('regen-btn').addEventListener('click', () => {
+  if (confirm('Regenerate API key? This will invalidate the current one.')) {
+    fetch('/auth/generate_api_key', { method: 'POST' })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('api_key').value = data.api_key;
+          alert('New API key generated!');
+        } else {
+          alert('Failed to generate API key.');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        alert('Error regenerating API key.');
+      });
+  }
+});
+</script>
 {% endblock %}
