@@ -1,12 +1,12 @@
 # visiofirm/routes/annotation.py
-from fastapi import APIRouter, Request, Depends, HTTPException, status, UploadFile, File, Query
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi import APIRouter, Request, Depends, HTTPException, File, Query
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from visiofirm.security import get_current_user_from_cookie, User
 from tqdm import tqdm
 import os
 import json
-from visiofirm.config import PROJECTS_FOLDER
+from visiofirm.config import PROJECTS_FOLDER, TMP_FOLDER
 from visiofirm.projects import VFProjects
 from visiofirm.models.project import Project 
 from visiofirm.models.user import get_user_by_id
@@ -19,7 +19,8 @@ from visiofirm.tracker import VFTracker
 import logging
 import sqlite3
 from werkzeug.utils import secure_filename
-from typing import Optional, Dict, Any
+from typing import Optional
+import shutil
 
 router = APIRouter(prefix="/annotation")
 module_dir = os.path.dirname(__file__)
@@ -674,7 +675,7 @@ async def download_images(
 
         print(f"Downloading {len(filenames or [])} images from {project_name}...")
 
-        downloader = VFImageDownloader(proj, save_path or '/tmp', selected_images=filenames if filenames else None)
+        downloader = VFImageDownloader(proj, save_path or TMP_FOLDER, selected_images=filenames if filenames else None)
         zip_path = downloader.download()
         tracker.log_substep('Images downloaded', details={'zip_path': zip_path, 'image_count': len(filenames or [])})
         tracker.log_step('Image download completed', details={'project': project_name})
@@ -694,73 +695,131 @@ async def download_images(
         print(f"Download failed for {project_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post('/export/{project_name}')
+@router.post("/export/{project_name}")
 async def export_annotations(
     project_name: str,
     request: Request,
     current_user: User = Depends(get_current_user_from_cookie)
 ):
-    tracker = request.app.tracker  # Use request.app
+    print(f"Endpoint hit for project: {project_name}", flush=True)
+    tracker_app = request.app.tracker
+    
+    # Log raw body to see EXACT payload
+    body = await request.body()
+    print(f"Raw request body: {body.decode('utf-8')}", flush=True)
+    
+    data = await request.json()
+    print(f"Received export data: {data}", flush=True)
+    print(f"local_export from data: {data.get('local_export')} (type: {type(data.get('local_export'))})", flush=True)
+    
+    format = data.get('format')
+    videos = data.get('videos') or []
+    extract_frames = data.get('extract_frames', False)
+    semantic = data.get('semantic', False)
+    user_export_path = data.get('export_path')
+    local_export = data.get('local_export', False)
+    print(f"local_export after get: {local_export} (type: {type(local_export)})", flush=True)
+    print(f"user_export_path: {user_export_path}", flush=True)
+    
     try:
-        data = await request.json()
-    except:
-        form = await request.form()
-        data_str = form.get('export_data')
-        if data_str:
-            data = json.loads(data_str)
-        else:
-            raise HTTPException(status_code=400, detail='No data provided')
-
-    tracker.log_step('Exporting annotations', details={'project': project_name, 'format': data.get('format'), 'splits': data.get('split_choices')})
-    try:
-        format_type = data.get('format')
-        selected_images = data.get('images', [])  # Abs paths or filenames? Normalize to abs
-        split_choices = data.get('split_choices', ['train'])
-        split_ratios = data.get('split_ratios', {'train': 100})
-        save_path = data.get('save_path')
-
-        if not format_type:
-            raise ValueError('Format not specified')
-
         proj = VFProjects.get_project(project_name)
         if not proj:
-            raise ValueError('Project not found')
-
-        print(f"Exporting {project_name} in {format_type} format...")
-
-        # Normalize selected_images to abs paths if filenames
-        if selected_images and not os.path.isabs(selected_images[0]):
-            images_path = os.path.join(os.path.dirname(proj.db_path), 'images')
-            selected_images = [os.path.join(images_path, secure_filename(img)) for img in selected_images]
-
+            raise HTTPException(status_code=404, detail="Project not found")
+        print(f"Project loaded: {proj.name}", flush=True)
+        
+        is_video_project = proj.get_setup_type().startswith('Video ')
+        print(f"Is video project: {is_video_project}", flush=True)
+        
+        # Fetch all videos for mapping/fallback
+        all_videos = proj.get_videos()
+        internal_ids = [v[0] for v in all_videos]
+        internal_paths = [v[1] for v in all_videos]
+        print(f"All videos from project: {all_videos}", flush=True)
+        print(f"Internal IDs: {internal_ids}", flush=True)
+        print(f"Internal paths: {internal_paths}", flush=True)
+        
+        if is_video_project and not videos:
+            videos = internal_paths
+            print(f"Fetched all videos (paths): {len(videos)}", flush=True)
+        else:
+            print(f"Incoming videos: {videos}", flush=True)
+            # Map incoming videos (IDs or paths) to internal paths
+            mapped_videos = []
+            for vid in videos:
+                if not vid: 
+                    continue
+                try:
+                    vid_int = int(vid)  # Handle string '1' -> int 1
+                    if vid_int in internal_ids:
+                        idx = internal_ids.index(vid_int)
+                        mapped_path = internal_paths[idx]
+                        mapped_videos.append(mapped_path)
+                        print(f"Mapped ID '{vid}' to path '{mapped_path}'", flush=True)
+                    elif vid in internal_paths:
+                        # Already a path: keep it
+                        mapped_videos.append(vid)
+                        print(f"Direct path match: '{vid}'", flush=True)
+                    else:
+                        print(f"Warning: No match for '{vid}' (not ID or path)", flush=True)
+                except ValueError:
+                    # Not an int: treat as potential path
+                    if vid in internal_paths:
+                        mapped_videos.append(vid)
+                    else:
+                        print(f"Warning: Invalid non-numeric '{vid}'", flush=True)
+            
+            videos = mapped_videos
+            print(f"Final videos for exporter: {videos}", flush=True)
+        
+        if not videos:
+            raise ValueError("No valid videos found or matched in project")
+        
+        # Determine exporter path based on mode
+        exporter_path = user_export_path if local_export else TMP_FOLDER
+        print(f"exporter_path: {exporter_path}", flush=True)
+        
         exporter = VFExporter(
             project=proj,
-            path=save_path or '/tmp',
-            format=format_type,
-            selected_images=selected_images,
-            split_choices=split_choices,
-            split_ratios=split_ratios
+            path=exporter_path, 
+            format=format,
+            videos=videos,
+            extract_frames=extract_frames,
+            semantic=semantic
         )
-
-        zip_path = exporter.export()
-        tracker.log_substep('Export generated', details={'zip_path': zip_path, 'format': format_type, 'selected_images_count': len(selected_images or [])})
-        tracker.log_step('Annotations export completed', details={'project': project_name})
-        print(f"Export completed: {zip_path}")
-        if save_path:
-            return {'success': True, 'saved_file': zip_path}
-        else:
-            # Stream ZIP
-            return FileResponse(
-                zip_path,
-                media_type='application/zip',
-                filename=f'{project_name}_{format_type}.zip'
-            )
-    except Exception as e:
-        tracker.log_error(e, step='Export annotations')
-        logger.error(f'Export failed: {e}')
-        print(f"Export failed for {project_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"VFExporter created with path: {exporter_path}", flush=True)
         
+        zip_path = exporter.export()
+        print(f"Export completed: {zip_path}", flush=True)
+        
+        if local_export:
+            print(f"Local export branch hit: Returning JSON with path {zip_path}", flush=True)
+            # Validate path was used (fixed for trailing /)
+            clean_user_path = user_export_path.rstrip('/') if user_export_path else ''
+            common_prefix = os.path.commonprefix([str(zip_path), clean_user_path])
+            print(f"Path validation: zip_path={zip_path}, user_path={clean_user_path}, common_prefix={common_prefix}", flush=True)
+            if common_prefix != clean_user_path:
+                raise ValueError(f"Export saved to unexpected path: {zip_path} (expected prefix: {clean_user_path})")
+            return JSONResponse({"success": True, "saved_path": zip_path})
+        else:
+            print("Non-local export: Returning FileResponse", flush=True)
+            filename = os.path.basename(zip_path)
+            return FileResponse(
+                path=zip_path,
+                media_type='application/zip',
+                filename=filename,
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+    except ValueError as ve:
+        tracker_app.log_error(ve, step='Export annotations')
+        print(f"Export validation failed for {project_name}: {ve}", flush=True)
+        logger.error(f"Export validation failed for {project_name}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        tracker_app.log_error(e, step='Export annotations')
+        print(f"Export failed for {project_name}: {e}", flush=True)
+        logger.error(f"Export failed for {project_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+                
 @router.post('/delete_preannotations/{project_name}')
 async def delete_preannotations(
     project_name: str,
@@ -1160,52 +1219,4 @@ async def commit_video_preannotations(
         tracker.log_error(e, step='Commit video preannotations')
         logger.error(f"Error committing video preannotations: {e}")
         print(f"Error committing preannotations for video {video_id} in {project_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@router.post("/export/{project_name}")
-async def export_annotations(
-    project_name: str,
-    request: Request,
-    current_user: User = Depends(get_current_user_from_cookie)
-):
-    tracker_app = request.app.tracker
-    data = await request.json()
-    format = data.get('format')
-    videos = data.get('videos') or []  # List of video paths for video export; default to empty list
-    extract_frames = data.get('extract_frames', False)
-    semantic = data.get('semantic', False)
-    export_path = data.get('export_path', '/tmp')  # Temp path for ZIP generation
-
-    try:
-        proj = VFProjects.get_project(project_name)
-        if not proj:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        is_video_project = proj.get_setup_type().startswith('Video ')
-        if is_video_project and not videos:
-            all_videos = proj.get_videos()
-            if all_videos:
-                videos = [v[1] for v in all_videos]  # Extract absolute_path (index 1)
-            else:
-                raise ValueError("No videos found in project")
-
-        exporter = VFExporter(
-            project=proj,
-            path=export_path,
-            format=format,
-            videos=videos,
-            extract_frames=extract_frames,
-            semantic=semantic
-        )
-        zip_path = exporter.export()
-
-        return FileResponse(
-            path=zip_path,
-            media_type='application/zip',
-            filename=os.path.basename(zip_path),
-            headers={"Content-Disposition": f"attachment; filename={os.path.basename(zip_path)}"}
-        )
-    except Exception as e:
-        tracker_app.log_error(e, step='Export annotations')
-        logger.error(f"Export failed for {project_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
