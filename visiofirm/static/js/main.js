@@ -226,6 +226,8 @@ function showSuccessModal(message) {
 document.addEventListener('DOMContentLoaded', function() {
     initGlobals();
     const config = JSON.parse(document.getElementById('app-config').textContent);
+    const projectName = config.projectName; 
+    const setupType = config.setupType;
     const classes = config.classes;
     generateClassColors(classes);
     generateClassTags();
@@ -603,8 +605,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const importProgressContainer = document.getElementById('import-images-progress-container');
     const importBtn = document.getElementById('import-images-btn');
     const importSubmitBtn = importForm.querySelector('.create-btn');
-    const projectName = config.projectName;
-    const setupType = config.setupType;
 
     const importModal = initImportModal(
         importModalElement,
@@ -967,7 +967,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let statusInterval;
 
     async function checkPreannotationStatus() {
-        const response = await fetch(`/annotation/check_preannotation_status?project_name=${projectName}`);
+        const response = await fetch(`/annotation/check_preannotation_status?project_name=${config.projectName}`);
         const data = await response.json();
         return data.status;
     }
@@ -1149,6 +1149,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         blindTrustStatusInterval = null;
                         if (newStatus === 'completed') {
                             showSuccessModal('Blind Trust completed successfully');
+                            blindTrustModal.style.display = 'none';
                             setTimeout(() => location.reload(), 3000);
                         } else if (newStatus === 'failed') {
                             alert('Blind Trust failed');
@@ -1195,7 +1196,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (newStatus === 'completed') {
                             showSuccessModal('Blind Trust completed successfully');
                             blindTrustModal.style.display = 'none';
-                            location.reload();
+                            setTimeout(() => location.reload(), 3000);
                         } else if (newStatus === 'failed') {
                             alert('Blind Trust failed');
                         }
@@ -1231,269 +1232,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     setInterval(addSparkles, 500);
-});
-
-const aiPreannotatorBtn = document.getElementById('ai-preannotator-btn');
-const aiPreannotatorModal = document.getElementById('ai-preannotator-modal');
-const aiPreannotatorForm = document.getElementById('ai-preannotator-form');
-const closeBtn = aiPreannotatorModal.querySelector('.close-btn');
-const modeButtons = document.querySelectorAll('.mode-btn');
-const modeInput = document.getElementById('mode');
-let statusInterval;
-
-async function checkPreannotationStatus() {
-    const response = await fetch(`/annotation/check_preannotation_status?project_name=${projectName}`);
-    const data = await response.json();
-    return data.status;
-}
-
-function updateUI(status) {
-    const applyButton = aiPreannotatorForm.querySelector('.create-btn');
-    
-    if (status === 'running') {
-        applyButton.disabled = true;
-        applyButton.textContent = 'Processing...';
-    } else {
-        applyButton.disabled = false;
-        applyButton.textContent = 'Apply';
-        if (statusInterval) {
-            clearInterval(statusInterval);
-            statusInterval = null;
-        }
-    }
-}
-
-aiPreannotatorBtn.addEventListener('click', async () => {
-    aiPreannotatorModal.style.display = 'flex';
-    try {
-        const status = await checkPreannotationStatus();
-        updateUI(status);
-
-        if (status === 'running' && !statusInterval) {
-            statusInterval = setInterval(async () => {
-                const newStatus = await checkPreannotationStatus();
-                updateUI(newStatus);
-                if (newStatus !== 'running') {
-                    clearInterval(statusInterval);
-                    statusInterval = null;
-                    if (newStatus === 'completed') {
-                        showSuccessModal('Pre-annotation completed successfully');
-                        setTimeout(() => location.reload(), 3000);
-                    } else if (newStatus === 'failed') {
-                        alert('Pre-annotation failed');
-                    }
-                }
-            }, 2000);
-        }
-
-        const response = await fetch('/annotation/check_gpu');
-        const data = await response.json();
-        const processingUnitSelect = document.getElementById('processing-unit');
-        const cpuWarning = document.getElementById('cpu-warning');
-        if (data.success && data.has_gpu) {
-            processingUnitSelect.value = 'cuda';
-            processingUnitSelect.disabled = false;
-            cpuWarning.style.display = 'none';
-        } else {
-            processingUnitSelect.value = 'cpu';
-            processingUnitSelect.disabled = true;
-            cpuWarning.style.display = 'block';
-        }
-    } catch (error) {
-        console.error('Error checking status or GPU:', error);
-    }
-});
-
-closeBtn.addEventListener('click', () => {
-    aiPreannotatorModal.style.display = 'none';
-    if (statusInterval) {
-        clearInterval(statusInterval);
-        statusInterval = null;
-    }
-});
-
-modeButtons.forEach(button => {
-    button.addEventListener('click', () => {
-        modeButtons.forEach(btn => btn.classList.remove('active'));
-        button.classList.add('active');
-        const mode = button.dataset.mode;
-        modeInput.value = mode;
-        if (mode === 'custom-model') {
-            document.getElementById('custom-model-path').style.display = 'block';
-            document.getElementById('zero-shot-options').style.display = 'none';
-        } else {
-            document.getElementById('custom-model-path').style.display = 'none';
-            document.getElementById('zero-shot-options').style.display = 'block';
-        }
-    });
-});
-
-aiPreannotatorForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const applyButton = aiPreannotatorForm.querySelector('.create-btn');
-    applyButton.disabled = true;
-    applyButton.textContent = 'Processing...';
-
-    const formData = new FormData();
-    const mode = modeInput.value;
-    formData.append('mode', mode);
-    formData.append('project_name', projectName);
-    
-    if (mode === 'zero-shot') {
-        const dinoModel = document.getElementById('dino-model').value;
-        formData.append('dino_model', dinoModel);
-    } else if (mode === 'custom-model') {
-        const modelPath = document.getElementById('model-path-input').value.trim();
-        formData.append('model_path', modelPath || 'yolov10x.pt');
-    }
-    
-    const processingUnit = document.getElementById('processing-unit').value;
-    formData.append('processing_unit', processingUnit);
-    const boxThreshold = document.getElementById('box-threshold').value;
-    formData.append('box_threshold', boxThreshold);
-
-    try {
-        const response = await fetch('/annotation/ai_preannotator_config', {
-            method: 'POST',
-            body: formData
-        });
-        const result = await response.json();
-
-        if (result.success) {
-            statusInterval = setInterval(async () => {
-                const newStatus = await checkPreannotationStatus();
-                updateUI(newStatus);
-                if (newStatus !== 'running') {
-                    clearInterval(statusInterval);
-                    statusInterval = null;
-                    if (newStatus === 'completed') {
-                        showSuccessModal('Pre-annotation completed successfully');
-                        aiPreannotatorModal.style.display = 'none';
-                        setTimeout(() => location.reload(), 3000);
-                    } else if (newStatus === 'failed') {
-                        alert('Pre-annotation failed');
-                    }
-                }
-            }, 2000);
-        } else {
-            alert(`Failed to start pre-annotation: ${result.error || 'Unknown error'}`);
-            updateUI('not_started');
-        }
-    } catch (error) {
-        console.error('Error running pre-annotation:', error);
-        alert(`Error running pre-annotation: ${error.message}`);
-        updateUI('not_started');
-    }
-});
-
-const blindTrustBtn = document.getElementById('ai-blind-trust');
-const blindTrustModal = document.getElementById('blind-trust-modal');
-const blindTrustForm = document.getElementById('blind-trust-form');
-const blindTrustCloseBtn = blindTrustModal.querySelector('.close-btn');
-let blindTrustStatusInterval;
-
-async function checkBlindTrustStatus() {
-    const response = await fetch(`/annotation/check_blind_trust_status?project_name=${projectName}`);
-    const data = await response.json();
-    return data.status;
-}
-
-function updateBlindTrustUI(status) {
-    const applyButton = blindTrustForm.querySelector('.create-btn');
-    
-    if (status === 'running') {
-        applyButton.disabled = true;
-        applyButton.textContent = 'Processing...';
-    } else {
-        applyButton.disabled = false;
-        applyButton.textContent = 'Apply';
-        if (blindTrustStatusInterval) {
-            clearInterval(blindTrustStatusInterval);
-            blindTrustStatusInterval = null;
-        }
-    }
-}
-
-blindTrustBtn.addEventListener('click', async () => {
-    blindTrustModal.style.display = 'flex';
-    try {
-        const status = await checkBlindTrustStatus();
-        updateBlindTrustUI(status);
-
-        if (status === 'running' && !blindTrustStatusInterval) {
-            blindTrustStatusInterval = setInterval(async () => {
-                const newStatus = await checkBlindTrustStatus();
-                updateBlindTrustUI(newStatus);
-                if (newStatus !== 'running') {
-                    clearInterval(blindTrustStatusInterval);
-                    blindTrustStatusInterval = null;
-                    if (newStatus === 'completed') {
-                        showSuccessModal('Blind Trust completed successfully');
-                        setTimeout(() => location.reload(), 3000);
-                    } else if (newStatus === 'failed') {
-                        alert('Blind Trust failed');
-                    }
-                }
-            }, 2000);
-        }
-    } catch (error) {
-        console.error('Error checking blind trust status:', error);
-    }
-});
-
-blindTrustCloseBtn.addEventListener('click', () => {
-    blindTrustModal.style.display = 'none';
-    if (blindTrustStatusInterval) {
-        clearInterval(blindTrustStatusInterval);
-        blindTrustStatusInterval = null;
-    }
-});
-
-blindTrustForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const applyButton = blindTrustForm.querySelector('.create-btn');
-    applyButton.disabled = true;
-    applyButton.textContent = 'Processing...';
-
-    const formData = new FormData();
-    formData.append('project_name', projectName);
-    const confidenceThreshold = document.getElementById('confidence-threshold').value;
-    formData.append('confidence_threshold', confidenceThreshold);
-
-    try {
-        const response = await fetch('/annotation/blind_trust', {
-            method: 'POST',
-            body: formData
-        });
-        const result = await response.json();
-
-        if (result.success) {
-            blindTrustStatusInterval = setInterval(async () => {
-                const newStatus = await checkBlindTrustStatus();
-                updateBlindTrustUI(newStatus);
-                if (newStatus !== 'running') {
-                    clearInterval(blindTrustStatusInterval);
-                    blindTrustStatusInterval = null;
-                    if (newStatus === 'completed') {
-                        showSuccessModal('Blind Trust completed successfully');
-                        blindTrustModal.style.display = 'none';
-                        location.reload();
-                    } else if (newStatus === 'failed') {
-                        alert('Blind Trust failed');
-                    }
-                }
-            }, 2000);
-        } else {
-            alert(`Failed to start Blind Trust: ${result.error || 'Unknown error'}`);
-            updateBlindTrustUI('not_started');
-        }
-    } catch (error) {
-        console.error('Error running Blind Trust:', error);
-        alert(`Error running Blind Trust: ${error.message}`);
-        updateBlindTrustUI('not_started');
-    }
 });
 
 export function updateClassTags() {
