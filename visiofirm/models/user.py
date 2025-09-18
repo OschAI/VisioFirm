@@ -45,8 +45,8 @@ def update_user(user_id, updates):
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         try:
-            # Handle password_hash specially if provided as plain text
-            if 'password_hash' in updates and 'password' in updates:
+            # Handle password specially if provided as plain text
+            if 'password' in updates:
                 updates['password_hash'] = pwd_context.hash(updates.pop('password'))
             set_clause = ', '.join(f"{key} = ?" for key in updates)
             values = list(updates.values()) + [user_id]

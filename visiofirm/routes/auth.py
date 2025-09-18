@@ -3,7 +3,6 @@ from fastapi.responses import RedirectResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from visiofirm.models.user import create_user, get_user_by_username, get_user_by_email, update_user, User
 from visiofirm.security import verify_password, create_access_token, get_current_user_from_cookie
-from datetime import timedelta
 from typing import Optional
 import os
 
