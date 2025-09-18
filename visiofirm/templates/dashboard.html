@@ -872,7 +872,7 @@
                 overviewModal.style.display = 'flex';
 
                 try {
-                    const response = await fetch(`/get_project_overview/${projectName}`);
+                    const response = await fetch(`/dashboard/get_project_overview/${projectName}`);
                     const data = await response.json();
                     if (data.error) {
                         alert(data.error);
@@ -966,7 +966,7 @@
 
         confirmDeleteBtn.addEventListener('click', async () => {
             if (!deleteProjectName) return;
-            const response = await fetch(`/delete_project/${deleteProjectName}`, { method: 'POST' });
+            const response = await fetch(`/dashboard/delete_project/${deleteProjectName}`, { method: 'POST' });
             const result = await response.json();
             if (result.success) {
                 location.reload();
