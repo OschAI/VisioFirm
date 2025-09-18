@@ -1193,7 +1193,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         clearInterval(blindTrustStatusInterval);
                         blindTrustStatusInterval = null;
                         if (newStatus === 'completed') {
-                            alert('Blind Trust completed successfully');
+                            showSuccessModal('Blind Trust completed successfully');
                             blindTrustModal.style.display = 'none';
                             location.reload();
                         } else if (newStatus === 'failed') {
@@ -1477,7 +1477,7 @@ blindTrustForm.addEventListener('submit', async (e) => {
                     clearInterval(blindTrustStatusInterval);
                     blindTrustStatusInterval = null;
                     if (newStatus === 'completed') {
-                        alert('Blind Trust completed successfully');
+                        showSuccessModal('Blind Trust completed successfully');
                         blindTrustModal.style.display = 'none';
                         location.reload();
                     } else if (newStatus === 'failed') {
