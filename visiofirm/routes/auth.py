@@ -1,3 +1,4 @@
+#visiofirm/routes/auth.py
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
 from fastapi.responses import RedirectResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -30,7 +31,7 @@ async def login_post(
     access_token = create_access_token(
         data={"sub": str(user_data[0])}, expires_delta=access_token_expires
     )
-    response = RedirectResponse(url="/?flash=success&message=Login successful!", status_code=303)
+    response = RedirectResponse(url="/dashboard?flash=success&message=Login successful!", status_code=303)
     response.set_cookie(
         key="access_token",
         value=access_token,
@@ -72,7 +73,8 @@ async def profile_post(
     last_name: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
     password: Optional[str] = Form(None),
-    company: Optional[str] = Form(None)
+    company: Optional[str] = Form(None),
+    regenerate_api_key: Optional[bool] = Form(False)
 ):
     updates = {}
     if first_name:
@@ -85,9 +87,13 @@ async def profile_post(
         updates['password'] = password 
     if company:
         updates['company'] = company
-
     if not updates:
         return RedirectResponse(url="/auth/profile?flash=error&message=No changes provided", status_code=303)
+    if regenerate_api_key:
+        from visiofirm.models.user import generate_api_key
+        new_key = generate_api_key(current_user.id)
+        if new_key:
+            updates['api_key'] = new_key
 
     success = update_user(current_user.id, updates)
     if success:
@@ -97,9 +103,13 @@ async def profile_post(
 
 @router.get("/profile_data", name="auth.profile_data")
 async def profile_data(current_user: User = Depends(get_current_user_from_cookie)):
+    from visiofirm.models.user import generate_api_key
+    # Auto-generate if missing
+    if not current_user.api_key:
+        current_user.api_key = generate_api_key(current_user.id) or ""
     try:
         avatar = current_user.avatar
-        return {"success": True, "avatar": avatar}
+        return {"success": True, "avatar": avatar, "api_key": current_user.api_key}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -134,3 +144,11 @@ async def reset_password_post(
             return RedirectResponse(url="/auth/reset_password?flash=error&message=Error resetting password", status_code=303)
     else:
         return RedirectResponse(url="/auth/reset_password?flash=error&message=Invalid username or email", status_code=303)
+    
+@router.post("/generate_api_key", name="auth.generate_api_key")
+async def generate_api_key_post(current_user: User = Depends(get_current_user_from_cookie)):
+    from visiofirm.models.user import generate_api_key
+    new_key = generate_api_key(current_user.id)
+    if new_key:
+        return {"success": True, "api_key": new_key}
+    raise HTTPException(status_code=500, detail="Failed to generate API key")
