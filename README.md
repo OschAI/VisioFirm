@@ -142,7 +142,7 @@ git clone https://github.com/OschAI/VisioFirm.git
 cd VisioFirm
 pip install -e .
 ```
-
+ 
 ## Quick Start
 
 Launch VisioFirm with a single command—it auto-starts a local web server and opens in your browser.
