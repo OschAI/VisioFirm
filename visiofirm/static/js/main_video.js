@@ -79,6 +79,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     globals.mousedownX = undefined; // For drag detection
     globals.lastRightClickTime = 0;
     globals.lastRightClickX = 0;
+    globals.isPanning = false;
+    globals.panStart = { x: 0, y: 0 };
     // Destructure only non-mutable DOM elements (after setting them)
     const {
         canvas,
@@ -436,14 +438,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Export Modal Setup
     const exportModal = document.getElementById('export-modal');
-    // const exportContent = document.getElementById('export-content');
-    // const exportTitle = document.getElementById('export-title');
-    // const videosSection = document.getElementById('videos-section');
     const videosCheckboxes = document.getElementById('videos-checkboxes');
-    // const framesCheckbox = document.getElementById('frames-checkbox');
-    // const semanticCheckbox = document.getElementById('semantic-checkbox');
-    // const formatLabel = document.getElementById('format-label');
-    // const formatOptions = document.getElementById('format-options');
     const exportCancel = document.getElementById('export-cancel');
     const exportStart = document.getElementById('export-start');
 
@@ -1188,7 +1183,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (dist < 10 && a.points.length >= 2) {
                     ctx.lineTo(first.x, first.y);
                     ctx.closePath();
-                    ctx.globalAlpha = 0.2;
+                    ctx.globalAlpha = 0.7;
                     ctx.fill();
                     ctx.globalAlpha = 1.0;
                 }
@@ -1210,7 +1205,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     setupAnnotationInteractions(drawImage, pushToUndoStack, setSelectedAnnotation, clampView);
+    if (canvas) {
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.shiftKey && !globals.isPanning) {
+                globals.isPanning = true;
+                globals.panStart = { x: e.clientX, y: e.clientY };
+                e.preventDefault();
+            }
+        });
 
+        canvas.addEventListener('mousemove', (e) => {
+            if (globals.isPanning) {
+                const dx = e.clientX - globals.panStart.x;
+                const dy = e.clientY - globals.panStart.y;
+                globals.viewport.x += dx;
+                globals.viewport.y += dy;
+                globals.panStart = { x: e.clientX, y: e.clientY };
+                drawImage();
+                clampView();
+                e.preventDefault();
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (globals.isPanning) {
+                globals.isPanning = false;
+                e.preventDefault();
+            }
+        });
+
+        canvas.addEventListener('mouseleave', (e) => {
+            if (globals.isPanning) {
+                globals.isPanning = false;
+            }
+        });
+    }
+    
     // =========================
     // VIDEO LOADING & THUMBNAILS
     // =========================
@@ -1622,12 +1652,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         function handleSeeked() {
             if (!globals.currentVideo || globals.frames.length === 0) return;
             const t = globals.currentVideo.currentTime;
-            const fps = globals.fps || 30;
-            const frameNum = Math.round(t * fps);
-            const index = globals.frames.findIndex(f => f.frame_number === frameNum);
-            if (index !== -1 && index !== globals.currentFrameIndex) {
-                globals.currentFrameIndex = index;
-                globals.annotations = globals.annotationMap[index] || [];
+            let closestIndex = 0;
+            let minDist = Math.abs(globals.frames[0].timestamp - t);
+            for (let i = 1; i < globals.frames.length; i++) {
+                const dist = Math.abs(globals.frames[i].timestamp - t);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestIndex = i;
+                }
+            }
+            if (closestIndex !== globals.currentFrameIndex) {
+                globals.currentFrameIndex = closestIndex;
+                globals.annotations = globals.annotationMap[closestIndex] || [];
                 setSelectedAnnotation(null);
                 drawImage();
             }

@@ -177,7 +177,7 @@ function generateClassColors(classes) {
         const saturation = 80 + Math.random() * 10;
         const lightness = 50 + Math.random() * 5;
         const color = hslToHex(hue, saturation, lightness);
-        classColors[cls] = color + '33';
+        classColors[cls] = color + 'FF';
     });
 }
 

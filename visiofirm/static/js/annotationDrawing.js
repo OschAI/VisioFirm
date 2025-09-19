@@ -1,4 +1,19 @@
-import { ctx, setupType, currentImage, viewport, annotations, confidenceThreshold, selectedAnnotation, selectedPointIndex, classColors, gridEnabled, gridSize, canvas, currentAnnotation, isDrawing } from './globals.js';
+import { 
+    ctx, 
+    setupType, 
+    currentImage,
+    viewport, 
+    annotations, 
+    confidenceThreshold,
+    selectedAnnotation,
+    selectedPointIndex,
+    classColors,
+    gridEnabled,
+    gridSize,
+    canvas,
+    currentAnnotation,
+    isDrawing
+} from './globals.js';
 import { toCanvasCoords } from './annotationCore.js';
 
 let hoveredAnnotation = null;
@@ -13,7 +28,7 @@ export function setHoveredAnnotation(annotation) {
 function animateDashedBorders(timestamp) {
     if (!lastTimestamp) lastTimestamp = timestamp;
     const delta = timestamp - lastTimestamp;
-    dashOffset = (dashOffset + delta * 0.05) % 10;
+    dashOffset = (dashOffset + delta * 0.05) % 40;
     lastTimestamp = timestamp;
     if (!isDrawing) {
         drawImage();
@@ -104,11 +119,11 @@ function drawRectAnnotation(anno) {
     ctx.beginPath();
     ctx.rect(topLeft.x, topLeft.y, size.width, size.height);
     if (anno.isPreannotation) {
-        ctx.globalAlpha = 0.8;
-        ctx.setLineDash([5, 5]);
+        ctx.globalAlpha = 0.7;
+        ctx.setLineDash([10, 10]);
         ctx.lineDashOffset = dashOffset;
     } else {
-        ctx.globalAlpha = 1.0;
+        ctx.globalAlpha = 0.7;
         ctx.setLineDash([]);
     }
     ctx.fillStyle = classColors[anno.label] || '#0000ff33';
@@ -131,11 +146,11 @@ function drawPolygonAnnotation(anno) {
     }
     if (anno.closed) ctx.closePath();
     if (anno.isPreannotation) {
-        ctx.globalAlpha = 0.5;
-        ctx.setLineDash([5, 5]);
+        ctx.globalAlpha = 0.7;
+        ctx.setLineDash([10, 10]);
         ctx.lineDashOffset = dashOffset;
     } else {
-        ctx.globalAlpha = 1.0;
+        ctx.globalAlpha = 0.7;
         ctx.setLineDash([]);
     }
     ctx.fillStyle = classColors[anno.label] || '#fbff0033';
