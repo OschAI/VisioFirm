@@ -9,13 +9,14 @@
 
 -------
 > [!IMPORTANT]
-> A new release has just dropped. `VisioFirm 0.2.0` brings enhancements including bug fixes for image import, improved frontend loading, Cloud/SSH support for downloading images and saving annotations, SAM2 worker offloading for better performance, optimized SAM2-Auto annotation for faster computing, and thread optimizations for image uploading. This version builds on the stable GroundingDINO dependency from 0.1.4.
-> - **Cloud/SSH Integration**: download images from cloud storage or SSH servers and save annotations remotely (using local absolute paths).
-> - **Enhanced Image Handling**: Fixed bugs in image import, faster frontend loading, and multi-threaded uploading for efficiency.
-> - **SAM2 Optimizations**: Worker-based offloading and improved auto-annotation for rapid, high-performance segmentation in the browser. Though you may experience a first timelaps for the first label generation the subsequent annotators are instant.
-
-> [!NOTE]
-> If you prefer the HF transformers-based library (pre-0.2.0), install from the main branch via `pip install visiofirm==0.1.0`.
+> VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  What’s New in v1 ✨
+> * **Classification and Preannotation**: Predict and pre-suggest image classes using **OpenAI CLIP pretrained model**, enabling near-automatic labeling.
+> * **Video Support & Label Propagation**: New **VFTracker** auto-labeling with frame-to-frame propagation: choose between: (1) **SmartPropagator** – Leverages **SAM2 + pre/post processing** for accurate, cumulative tracking. Annotate the first frame, propagate across the sequence. (2) **OpenCV Trackers** – Full support (CSRT, KCF, Boosting, MIL, TLD, MedianFlow, MOSSE, GOTURN) and (3) **Interpolation** – Classic propagation between `[labeled_start]` and `[labeled_end]`.
+> * **Ultralytics Model Support**: Works with **YOLOv12 → YOLOv5**, including **YOLOv8-world** for open-vocab pre-annotation.
+> * **Cross-domain annotation**: use detection models to pre-generate segmentation masks, or segmentation models to pre-label bounding boxes.
+> * **Memory Management Improvements**: Optimized GPU usage with better model load/unload behavior for large-scale pre-annotation and tracking.
+> * **Backend Migration to FastAPI**: Faster performance, async support, and smoother UI interactions.
+> * **Python API**: Integrate VisioFirm seamlessly into pipelines with the new `visiofirm` Python API.
 -------
 
 **VisioFirm** is an open-source, AI-powered image annotation tool designed to accelerate labeling for computer vision tasks like object detection, oriented bounding boxes (OBB), and segmentation. Built for speed and simplicity, it leverages state-of-the-art models for semi-automated pre-annotations, allowing you to focus on refining rather than starting from scratch. Whether you're preparing datasets for YOLO, SAM, or custom models, VisioFirm streamlines your workflow with a intuitive web interface and powerful backend.
@@ -34,29 +35,100 @@ Unlike other annotation tool, this one is majoraly focused on CV tasks annotatio
 - **SAM2-base webgpu**: Insta-drawing of annotations via SAM2 with worker offloading and auto-annotation for faster computing!
 ![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/orange-apples-test.gif) 
 
+Perfect — the **Features** section should reflect everything you’ve added in **v1**. Right now, it misses:
+
+* Automated **classification** with CLIP.
+* **Video annotation & propagation** (SmartPropagator, OpenCV trackers, interpolation).
+* **Cross-domain annotation** (det → seg, seg → det).
+* **Ultralytics model compatibility** (YOLOv12…YOLOv5, YOLOv8-world).
+* **Better GPU memory management**.
+* **FastAPI backend** + async UI improvements.
+* **Python API** integration.
+
+Here’s an **expanded Features section** you can drop in:
+
+---
+
 ## Features
 
-- **Semi-Automated Labeling**: Kickstart annotations with AI models like YOLO for detection, SAM for segmentation, and Grounding DINO for zero-shot object grounding.
-- **Flexible Annotation Types**:
-  - Axis-aligned bounding boxes for standard detection.
-  - Oriented bounding boxes for rotated objects (e.g., aerial imagery).
-  - Polygon segmentation for precise boundaries.
-- **Interactive Frontend**: Draw, edit, and refine labels on a responsive canvas. Click-to-segment with browser-based SAM for instant masks.
-- **Project Management**: Create, manage, and export projects with SQLite database storage. Support for multiple classes and images.
-- **Export Formats**: Seamless exports to YOLO, COCO, or custom formats for training.
-- **Performance Optimizations**: Cluster overlapping detections, simplify contours, and filter by confidence for clean datasets.
-- **Cloud/SSH Integration**: Seamlessly download images from cloud storage or SSH servers and save annotations remotely.
-- **Enhanced Image Handling**: Fixed bugs in image import, faster frontend loading, and multi-threaded uploading for efficiency.
-- **SAM2 Optimizations**: Worker-based offloading and improved auto-annotation for rapid, high-performance segmentation in the browser.
-- **Cross-Platform**: Runs locally on Linux, macOS, or Windows via Python— no cloud dependency.
+* **Semi-Automated Labeling**
+  Kickstart annotations with AI models like **YOLO (v5–v12)** for detection, **SAM2** for segmentation, **Grounding DINO** for zero-shot object grounding, and **CLIP** for automated classification.
 
-![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/AIpreannotator-demo.gif) 
+* **Flexible Annotation Types**
+
+  * Axis-aligned bounding boxes for standard detection.
+  * Oriented bounding boxes for rotated objects (e.g., aerial imagery).
+  * Polygon segmentation for precise boundaries.
+  * Image classification with automatic label suggestions.
+
+* **Video Annotation & Label Propagation**
+  Annotate videos with frame-to-frame consistency:
+
+  * **SmartPropagator** (SAM2-powered accurate propagation).
+  * **OpenCV trackers** (CSRT, KCF, Boosting, MIL, TLD, MedianFlow, MOSSE, GOTURN).
+  * **Interpolation** between annotated start/end frames.
+
+* **Cross-Domain Annotation**
+
+  * Use detection models to auto-generate segmentation masks.
+  * Use segmentation models to pre-label bounding boxes.
+
+* **Ultralytics Model Support**
+  Full support for **YOLOv12, v11, v10, v9, v8, v5**, plus **YOLOv8-world** for open-vocab pre-annotations (no GPU required).
+
+* **Interactive Frontend**
+  Draw, edit, and refine labels on a responsive canvas.
+
+  * **Click-to-segment** with browser-based SAM2.
+  * Hotkeys, undo/redo, and zoom for efficient annotation.
+
+* **Project Management**
+  Organize datasets with SQLite-backed projects.
+
+  * Multi-class support.
+  * Import/export with minimal setup.
+
+* **Export Formats**
+  Export annotations to **YOLO, COCO, or custom formats** for seamless training.
+
+* **Performance Optimizations**
+
+  * GPU memory management for efficient model loading/unloading.
+  * Cluster overlapping detections, simplify contours, and filter by confidence.
+  * Multi-threaded uploading and optimized image import.
+
+* **Cloud/SSH Integration**
+  Download images from cloud storage or SSH servers, save annotations remotely, and manage large-scale projects.
+
+* **Backend Migration to FastAPI**
+  Faster response times, async support, and smoother UI performance.
+
+* **VisioFirm Python API**
+  Integrate annotation workflows into custom scripts and ML pipelines.
+
+## DEMOs
+
+Detection based on pre-trained/zeroshot models:
+
+![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/AIpreannotator-demo.gif)
+
+Video Segmentation using Smart Propagator:
+
+![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/demo_annotation.mp4) 
 
 ## Installation
 
-VisioFirm is easy to install via pip from GitHub (PyPI coming soon!).
+VisioFirm was tested with `Python 3.10+`.
 
-It was tested with `Python 3.10+`.
+> [!NOTE]
+> VisioFirm v1 introduces a new database management logic.  
+> To avoid conflicts with older versions, you need to **rename/remove the old cache folder** before running the new release:  
+> 
+> - **Linux**: `~/.cache/visiofirm_cache`  
+> - **macOS**: `~/Library/Caches/visiofirm_cache`  
+> - **Windows**: `%LOCALAPPDATA%\visiofirm_cache`  
+> 
+> After deleting the folder, restart VisioFirm — it will automatically recreate the cache directory with the new structure.
 
 ```bash
 pip install -U visiofirm
@@ -92,25 +164,15 @@ The VisioFirm app uses cache directories to store settings locally.
 
 VisioFirm uses advanced models for initial labels:
 
-- **YOLOv10**: Fast detection.
-- **SAM2**: Precise segmentation.
+- **YOLO**: All ultralytics based YOLO model are now compatible and can be used.
+- **SAM2**: Precise segmentation use in image annotation and video propagation
 - **Grounding DINO**: Zero-shot detection via text prompts.
-
-Models auto-download on first run (stored in current dir or cache). For offline prep:
-
-### Frontend Customization
-
-The web interface (Flask + JS) supports hotkeys, undo/redo, and zoom. Edit `static/js/sam.js` for browser SAM tweaks.
-
-### Exporting Data
-
-From the dashboard, export to JSON, TXT (YOLO format), or images with masks.
 
 ## Community & Support
 
 - **Issues**: Report bugs or request features [here](https://github.com/OschAI/VisioFirm/issues).
 - **Discord**: Coming soon—star the repo for updates!
-- **Roadmap**: Multi-user support, video annotation, custom model integration.
+- **Roadmap**: Multi-user support, custom model integration.
 
 ## License
 
@@ -133,17 +195,7 @@ Built by [Safouane El Ghazouali](https://github.com/safouaneelg) for the researc
 }
 ```
 
-## TODOs
-
 **SOON**:
 
 - Documentation website
 - Discord community
-- Paper - detailing the implementation and AI preannotation pipeline
-- Classification
-
-**Futur**:
-
-- Support for video annotation
-- Support for more ML frameworks (such as mmdetection and detectron2)
-
