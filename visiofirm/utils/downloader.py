@@ -8,6 +8,7 @@ from visiofirm.config import WEIGHTS_FOLDER
 logger = logging.getLogger(__name__)
 
 KNOWN_MODELS = {
+    #### YOLO DETECTION
     # YOLOv5
     "yolov5nu.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov5nu.pt",
     "yolov5su.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov5su.pt",
@@ -50,6 +51,26 @@ KNOWN_MODELS = {
     "yolo12m.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12m.pt",
     "yolo12l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12l.pt",
     "yolo12x.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12x.pt",
+
+    #### YOLO SEGMENTATION
+    "yolo8n-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo8n-seg.pt",
+    "yolo8s-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo8s-seg.pt",
+    "yolo8m-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo8m-seg.pt",
+    "yolo8l-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo8l-seg.pt",
+    "yolo8x-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo8x-seg.pt",
+
+    "yolo11n-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-seg.pt",
+    "yolo11s-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s-seg.pt",
+    "yolo11m-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m-seg.pt",
+    "yolo11l-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11l-seg.pt",
+    "yolo11x-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x-seg.pt",
+
+    "yolo12n-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n-seg.pt",
+    "yolo12s-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s-seg.pt",
+    "yolo12m-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12m-seg.pt",
+    "yolo12l-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12l-seg.pt",
+    "yolo12x-seg.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12x-seg.pt",
+
     # SAM2
     "sam2_t.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2_t.pt",
     "sam2_s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2_s.pt",
@@ -59,9 +80,21 @@ KNOWN_MODELS = {
     "sam2.1_s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_s.pt",
     "sam2.1_b.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_b.pt",
     "sam2.1_l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_l.pt",
+
+    #### ZEROSHOT
     # Grounding DINO
     "groundingdino_swint_ogc.pth": "https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth",
     "groundingdino_swinb_cogcoor.pth": "https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha2/groundingdino_swinb_cogcoor.pth",
+
+    "yolov8s-world.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8x-world.pt",
+    "yolov8m-world.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8m-world.pt",
+    "yolov8l-world.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8l-world.pt",
+    "yolov8x-world.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8x-world.pt",
+
+    "yolov8s-worldv2.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s-worldv2.pt",
+    "yolov8m-worldv2.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8m-worldv2.pt",
+    "yolov8l-worldv2.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8l-worldv2.pt",
+    "yolov8x-worldv2.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8x-worldv2.pt",
 }
 
 def get_or_download_model(model_name: str) -> str:
