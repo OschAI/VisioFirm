@@ -322,6 +322,171 @@
         border-radius: 4px;
         font-size: 0.875rem;
     }
+
+    /* AI Preannotator Modal Styles */
+    #ai-preannotator-modal .modal-content.ai-modal-content {
+        max-width: 600px;
+        width: 90%;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-radius: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        padding: 40px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    #ai-preannotator-modal h2 {
+        color: #2c3e50;
+        font-size: 1.8rem;
+        font-weight: 600;
+        margin-bottom: 30px;
+        text-align: center;
+        letter-spacing: -0.5px;
+    }
+
+    #ai-preannotator-modal .form-group {
+        margin-bottom: 25px;
+    }
+
+    #ai-preannotator-modal .form-group label {
+        display: block;
+        color: #34495e;
+        font-weight: 500;
+        margin-bottom: 8px;
+        font-size: 0.95rem;
+    }
+
+    #ai-preannotator-modal .mode-buttons {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    #ai-preannotator-modal .mode-btn {
+        flex: 1;
+        padding: 12px 20px;
+        background: white;
+        border: 2px solid #e0e6ed;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        font-weight: 500;
+        color: #5a6c7d;
+    }
+
+    #ai-preannotator-modal .mode-btn.active,
+    #ai-preannotator-modal .mode-btn:hover {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: #667eea;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    }
+
+    #ai-preannotator-modal select,
+    #ai-preannotator-modal input[type="number"],
+    #ai-preannotator-modal input[type="text"] {
+        width: 100%;
+        padding: 12px 16px;
+        border: 2px solid #e0e6ed;
+        border-radius: 12px;
+        font-size: 1rem;
+        transition: all 0.3s ease;
+        background: white;
+    }
+
+    #ai-preannotator-modal select:focus,
+    #ai-preannotator-modal input[type="number"]:focus,
+    #ai-preannotator-modal input[type="text"]:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    #ai-preannotator-modal p {
+        color: #7f8c8d;
+        font-size: 0.9rem;
+        margin-top: 6px;
+        line-height: 1.4;
+    }
+
+    #ai-preannotator-modal .create-btn {
+        width: 100%;
+        padding: 14px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-top: 10px;
+    }
+
+    #ai-preannotator-modal .create-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+    }
+
+    /* Custom Model Input with Dropdown */
+    #custom-model-input-container {
+        display: flex;
+        gap: 10px;
+        align-items: end;
+    }
+
+    #model-path-input {
+        flex: 1;
+    }
+
+    #custom-model-dropdown {
+        position: relative;
+        min-width: 200px;
+    }
+
+    #custom-model-select {
+        width: 100%;
+        padding: 12px 40px 12px 16px;
+        border: 2px solid #e0e6ed;
+        border-radius: 12px;
+        background: white url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"%3e%3cpolyline points="6,9 12,15 18,9"%3e%3c/polyline%3e%3c/svg%3e') no-repeat right 12px center;
+        background-size: 16px;
+        cursor: pointer;
+        font-size: 1rem;
+        appearance: none;
+        transition: all 0.3s ease;
+    }
+
+    #custom-model-select:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    #custom-model-select option {
+        padding: 10px;
+        background: white;
+        color: #34495e;
+    }
+
+    #custom-model-select option:hover {
+        background: #f8f9fa;
+    }
+
+    /* Grouped optgroups for better UX */
+    #custom-model-select optgroup {
+        font-weight: 600;
+        color: #5a6c7d;
+        background: #f8f9fa;
+    }
+
+    #custom-model-select optgroup label {
+        display: block;
+        padding: 8px 10px;
+        font-style: italic;
+    }
 </style>
     <!-- Grid View -->
     <div id="grid-view" class="view-container grid-view">
@@ -799,15 +964,166 @@
                 <div id="zero-shot-options" class="form-group">
                     <label>Grounding Dino Model</label>
                     <select id="dino-model">
-                        <option value="tiny">Tiny</option>
-                        <option value="base">Base</option>
+                        <optgroup label="Grounding Dino">
+                            <option value="tiny">Tiny</option>
+                            <option value="base">Base</option>
+                        </optgroup>
                     </select>
                 </div>
                 {% endif %}
                 <div id="custom-model-path" class="form-group" style="display: none;">
                     <label>Model Path</label>
-                    <input type="text" id="model-path-input" name="model_path" placeholder="Enter absolute path to .pt model">
-                    <p>Leave empty to use default YOLOv10x</p>
+                    <div id="custom-model-input-container">
+                        <input type="text" id="model-path-input" name="model_path" placeholder="Enter absolute path to .pt model">
+                        <div id="custom-model-dropdown">
+                            <select id="custom-model-select">
+                                <option value="">Select Preset Model</option>
+                                <optgroup label="YOLOv5">
+                                    <option value="yolov5nu.pt">YOLOv5 Nano</option>
+                                    <option value="yolov5su.pt">YOLOv5 Small</option>
+                                    <option value="yolov5mu.pt">YOLOv5 Medium</option>
+                                    <option value="yolov5lu.pt">YOLOv5 Large</option>
+                                    <option value="yolov5xu.pt">YOLOv5 Extra Large</option>
+                                    <option value="yolov5n6u.pt">YOLOv5 Nano v6</option>
+                                    <option value="yolov5s6u.pt">YOLOv5 Small v6</option>
+                                    <option value="yolov5m6u.pt">YOLOv5 Medium v6</option>
+                                    <option value="yolov5l6u.pt">YOLOv5 Large v6</option>
+                                    <option value="yolov5x6u.pt">YOLOv5 Extra Large v6</option>
+                                </optgroup>
+                                <optgroup label="YOLOv8">
+                                    <option value="yolov8n.pt">YOLOv8 Nano</option>
+                                    <option value="yolov8s.pt">YOLOv8 Small</option>
+                                    <option value="yolov8m.pt">YOLOv8 Medium</option>
+                                    <option value="yolov8l.pt">YOLOv8 Large</option>
+                                    <option value="yolov8x.pt">YOLOv8 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLOv9">
+                                    <option value="yolov9t.pt">YOLOv9 Tiny</option>
+                                    <option value="yolov9s.pt">YOLOv9 Small</option>
+                                    <option value="yolov9m.pt">YOLOv9 Medium</option>
+                                    <option value="yolov9c.pt">YOLOv9 Compact</option>
+                                    <option value="yolov9e.pt">YOLOv9 Extended</option>
+                                </optgroup>
+                                <optgroup label="YOLOv10">
+                                    <option value="yolov10n.pt">YOLOv10 Nano</option>
+                                    <option value="yolov10s.pt">YOLOv10 Small</option>
+                                    <option value="yolov10m.pt">YOLOv10 Medium</option>
+                                    <option value="yolov10b.pt">YOLOv10 Base</option>
+                                    <option value="yolov10l.pt">YOLOv10 Large</option>
+                                    <option value="yolov10x.pt">YOLOv10 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLOv11">
+                                    <option value="yolo11n.pt">YOLOv11 Nano</option>
+                                    <option value="yolo11s.pt">YOLOv11 Small</option>
+                                    <option value="yolo11m.pt">YOLOv11 Medium</option>
+                                    <option value="yolo11l.pt">YOLOv11 Large</option>
+                                    <option value="yolo11x.pt">YOLOv11 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLOv12">
+                                    <option value="yolo12n.pt">YOLOv12 Nano</option>
+                                    <option value="yolo12s.pt">YOLOv12 Small</option>
+                                    <option value="yolo12m.pt">YOLOv12 Medium</option>
+                                    <option value="yolo12l.pt">YOLOv12 Large</option>
+                                    <option value="yolo12x.pt">YOLOv12 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLO Segmentation">
+                                    <option value="yolo8n-seg.pt">YOLOv8 Nano Seg</option>
+                                    <option value="yolo8s-seg.pt">YOLOv8 Small Seg</option>
+                                    <option value="yolo8m-seg.pt">YOLOv8 Medium Seg</option>
+                                    <option value="yolo8l-seg.pt">YOLOv8 Large Seg</option>
+                                    <option value="yolo8x-seg.pt">YOLOv8 Extra Large Seg</option>
+                                    <option value="yolo11n-seg.pt">YOLOv11 Nano Seg</option>
+                                    <option value="yolo11s-seg.pt">YOLOv11 Small Seg</option>
+                                    <option value="yolo11m-seg.pt">YOLOv11 Medium Seg</option>
+                                    <option value="yolo11l-seg.pt">YOLOv11 Large Seg</option>
+                                    <option value="yolo11x-seg.pt">YOLOv11 Extra Large Seg</option>
+                                    <option value="yolo12n-seg.pt">YOLOv12 Nano Seg</option>
+                                    <option value="yolo12s-seg.pt">YOLOv12 Small Seg</option>
+                                    <option value="yolo12m-seg.pt">YOLOv12 Medium Seg</option>
+                                    <option value="yolo12l-seg.pt">YOLOv12 Large Seg</option>
+                                    <option value="yolo12x-seg.pt">YOLOv12 Extra Large Seg</option>
+                                </optgroup>
+                                                                <optgroup label="YOLOv5">
+                                    <option value="yolov5nu.pt">YOLOv5 Nano</option>
+                                    <option value="yolov5su.pt">YOLOv5 Small</option>
+                                    <option value="yolov5mu.pt">YOLOv5 Medium</option>
+                                    <option value="yolov5lu.pt">YOLOv5 Large</option>
+                                    <option value="yolov5xu.pt">YOLOv5 Extra Large</option>
+                                    <option value="yolov5n6u.pt">YOLOv5 Nano v6</option>
+                                    <option value="yolov5s6u.pt">YOLOv5 Small v6</option>
+                                    <option value="yolov5m6u.pt">YOLOv5 Medium v6</option>
+                                    <option value="yolov5l6u.pt">YOLOv5 Large v6</option>
+                                    <option value="yolov5x6u.pt">YOLOv5 Extra Large v6</option>
+                                </optgroup>
+                                <optgroup label="YOLOv8">
+                                    <option value="yolov8n.pt">YOLOv8 Nano</option>
+                                    <option value="yolov8s.pt">YOLOv8 Small</option>
+                                    <option value="yolov8m.pt">YOLOv8 Medium</option>
+                                    <option value="yolov8l.pt">YOLOv8 Large</option>
+                                    <option value="yolov8x.pt">YOLOv8 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLOv9">
+                                    <option value="yolov9t.pt">YOLOv9 Tiny</option>
+                                    <option value="yolov9s.pt">YOLOv9 Small</option>
+                                    <option value="yolov9m.pt">YOLOv9 Medium</option>
+                                    <option value="yolov9c.pt">YOLOv9 Compact</option>
+                                    <option value="yolov9e.pt">YOLOv9 Extended</option>
+                                </optgroup>
+                                <optgroup label="YOLOv10">
+                                    <option value="yolov10n.pt">YOLOv10 Nano</option>
+                                    <option value="yolov10s.pt">YOLOv10 Small</option>
+                                    <option value="yolov10m.pt">YOLOv10 Medium</option>
+                                    <option value="yolov10b.pt">YOLOv10 Base</option>
+                                    <option value="yolov10l.pt">YOLOv10 Large</option>
+                                    <option value="yolov10x.pt">YOLOv10 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLOv11">
+                                    <option value="yolo11n.pt">YOLOv11 Nano</option>
+                                    <option value="yolo11s.pt">YOLOv11 Small</option>
+                                    <option value="yolo11m.pt">YOLOv11 Medium</option>
+                                    <option value="yolo11l.pt">YOLOv11 Large</option>
+                                    <option value="yolo11x.pt">YOLOv11 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLOv12">
+                                    <option value="yolo12n.pt">YOLOv12 Nano</option>
+                                    <option value="yolo12s.pt">YOLOv12 Small</option>
+                                    <option value="yolo12m.pt">YOLOv12 Medium</option>
+                                    <option value="yolo12l.pt">YOLOv12 Large</option>
+                                    <option value="yolo12x.pt">YOLOv12 Extra Large</option>
+                                </optgroup>
+                                <optgroup label="YOLO Segmentation">
+                                    <option value="yolo8n-seg.pt">YOLOv8 Nano Seg</option>
+                                    <option value="yolo8s-seg.pt">YOLOv8 Small Seg</option>
+                                    <option value="yolo8m-seg.pt">YOLOv8 Medium Seg</option>
+                                    <option value="yolo8l-seg.pt">YOLOv8 Large Seg</option>
+                                    <option value="yolo8x-seg.pt">YOLOv8 Extra Large Seg</option>
+                                    <option value="yolo11n-seg.pt">YOLOv11 Nano Seg</option>
+                                    <option value="yolo11s-seg.pt">YOLOv11 Small Seg</option>
+                                    <option value="yolo11m-seg.pt">YOLOv11 Medium Seg</option>
+                                    <option value="yolo11l-seg.pt">YOLOv11 Large Seg</option>
+                                    <option value="yolo11x-seg.pt">YOLOv11 Extra Large Seg</option>
+                                    <option value="yolo12n-seg.pt">YOLOv12 Nano Seg</option>
+                                    <option value="yolo12s-seg.pt">YOLOv12 Small Seg</option>
+                                    <option value="yolo12m-seg.pt">YOLOv12 Medium Seg</option>
+                                    <option value="yolo12l-seg.pt">YOLOv12 Large Seg</option>
+                                    <option value="yolo12x-seg.pt">YOLOv12 Extra Large Seg</option>
+                                </optgroup>
+                                <optgroup label="YOLO-World">
+                                    <option value="yolov8s-world.pt">YOLOv8 Small World</option>
+                                    <option value="yolov8m-world.pt">YOLOv8 Medium World</option>
+                                    <option value="yolov8l-world.pt">YOLOv8 Large World</option>
+                                    <option value="yolov8x-world.pt">YOLOv8 Extra Large World</option>
+                                </optgroup>
+                                <optgroup label="YOLO-World v2">
+                                    <option value="yolov8s-worldv2.pt">YOLOv8 Small World v2</option>
+                                    <option value="yolov8m-worldv2.pt">YOLOv8 Medium World v2</option>
+                                    <option value="yolov8l-worldv2.pt">YOLOv8 Large World v2</option>
+                                    <option value="yolov8x-worldv2.pt">YOLOv8 Extra Large World v2</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                    </div>
+                    <p>Leave empty to use default YOLOv10x. Select a preset to auto-fill the path.</p>
                 </div>
                 <div class="form-group">
                     <label>Processing Unit</label>
@@ -849,6 +1165,9 @@
             "projectName": "{{ project_name }}",
             "classes": {{ classes|tojson }}
         }
+    </script>
+    <script>
+        console.log('app-config content:', document.getElementById('app-config').textContent);
     </script>
     <script type="module" src="/static/js/main.js"></script>
 {% endblock %}
