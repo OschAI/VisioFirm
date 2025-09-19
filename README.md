@@ -36,20 +36,6 @@ Unlike other annotation tool, this one is majoraly focused on CV tasks annotatio
 
 ![Annotation Editing Demo](examples/visiofirmv1.gif) 
 
-Perfect — the **Features** section should reflect everything you’ve added in **v1**. Right now, it misses:
-
-* Automated **classification** with CLIP.
-* **Video annotation & propagation** (SmartPropagator, OpenCV trackers, interpolation).
-* **Cross-domain annotation** (det → seg, seg → det).
-* **Ultralytics model compatibility** (YOLOv12…YOLOv5, YOLOv8-world).
-* **Better GPU memory management**.
-* **FastAPI backend** + async UI improvements.
-* **Python API** integration.
-
-Here’s an **expanded Features section** you can drop in:
-
----
-
 ## Features
 
 * **Semi-Automated Labeling**
