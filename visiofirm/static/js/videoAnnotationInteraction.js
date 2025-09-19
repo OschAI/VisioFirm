@@ -24,6 +24,57 @@ export function setupAnnotationInteractions(drawImage, pushToUndoStack, setSelec
         globals.previewPoint = null;
     }
 
+    function findClosestHandle(canvasX, canvasY, annotations, viewport) {
+        let closestDist = Infinity;
+        let closestAnn = null;
+        let closestIndex = -1;
+        const threshold = 20; // Increased pixels in canvas space for larger uncertainty area
+
+        // Check finished annotations
+        annotations.forEach(ann => {
+            let handles = [];
+            if (ann.type === 'rect') {
+                handles = [
+                    { x: ann.x, y: ann.y },
+                    { x: ann.x + ann.width, y: ann.y },
+                    { x: ann.x, y: ann.y + ann.height },
+                    { x: ann.x + ann.width, y: ann.y + ann.height }
+                ];
+            } else if (ann.type === 'polygon') {
+                handles = ann.points.map(p => ({ x: p.x, y: p.y }));
+            }
+
+            handles.forEach((point, idx) => {
+                const canvasPoint = toCanvasCoords(point.x, point.y, viewport);
+                const dist = Math.hypot(canvasPoint.x - canvasX, canvasPoint.y - canvasY);
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closestAnn = ann;
+                    closestIndex = idx;
+                }
+            });
+        });
+
+        // Also check current unfinished polygon if applicable
+        if (globals.currentAnnotation && globals.currentAnnotation.type === 'polygon' && !globals.currentAnnotation.closed) {
+            const handles = globals.currentAnnotation.points.map(p => ({ x: p.x, y: p.y }));
+            handles.forEach((point, idx) => {
+                const canvasPoint = toCanvasCoords(point.x, point.y, viewport);
+                const dist = Math.hypot(canvasPoint.x - canvasX, canvasPoint.y - canvasY);
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closestAnn = globals.currentAnnotation;
+                    closestIndex = idx;
+                }
+            });
+        }
+
+        if (closestDist < threshold) {
+            return { ann: closestAnn, index: closestIndex };
+        }
+        return null;
+    }
+
     canvas.addEventListener('mousedown', e => {
         console.log('=== Mousedown fired ===', {
             button: e.button,
@@ -58,81 +109,99 @@ export function setupAnnotationInteractions(drawImage, pushToUndoStack, setSelec
             return;  // Prevent drawing on right-click
         }
 
-        // Handle left-click logic
-        if (globals.mode === 'select') {
-            console.log('In select mode - handling selection');
-            const ann = findAnnotationByPoint(imgPoint, globals.annotations);
-            globals.selectedAnnotation = ann;
-            if (ann) {
+        // Handle left-click logic: prioritize existing annotation modification in any mode
+        if (e.button === 0) {
+            const closestHandle = findClosestHandle(canvasX, canvasY, globals.annotations, globals.viewport);
+            if (closestHandle) {
+                const { ann, index } = closestHandle;
+                console.log('Hit closest handle, enabling point drag');
                 pushToUndoStack();
-                const handleIndex = findHandleIndex(canvasX, canvasY, ann, globals.viewport);
-                if (handleIndex >= 0) {
-                    globals.selectedPointIndex = handleIndex;
-                    globals.isDragging = true;
-                } else {
-                    globals.isTranslating = true;
-                }
+                globals.selectedAnnotation = ann;
+                globals.selectedPointIndex = index;
+                globals.isDragging = true;
                 globals.lastX = canvasX;
                 globals.lastY = canvasY;
-            }
-        } else if (globals.mode === 'rect') {
-            console.log('In rect mode - starting rect');
-            if (!globals.selectedClass) {
-                console.warn('Cannot start rect: No class selected');
+                drawImage();
                 return;
             }
-            pushToUndoStack();
-            globals.currentAnnotation = { type: 'rect', x: imgPoint.x, y: imgPoint.y, width: 0, height: 0, label: globals.selectedClass };
-            globals.annotations.push(globals.currentAnnotation);
-            globals.isDrawing = true;
-            // Record starting image coords for total extent calculation
-            globals.startImgX = imgPoint.x;
-            globals.startImgY = imgPoint.y;
-            globals.lastX = canvasX;
-            globals.lastY = canvasY;
-        } else if (globals.mode === 'polygon') {
-            console.log('In polygon mode - adding point');
-            if (!globals.selectedClass) {
-                console.warn('Cannot add polygon point: No class selected');
-                return;
-            }
-            const isNewAnnotation = !globals.currentAnnotation;
-            if (isNewAnnotation) {
-                console.log('Creating new polygon annotation');
-                pushToUndoStack();  // Only on first point
-                globals.currentAnnotation = { type: 'polygon', points: [], closed: false, label: globals.selectedClass };
-            }
-            globals.currentAnnotation.points.push(imgPoint);
-            console.log('Added point to polygon (total points now:', globals.currentAnnotation.points.length, '):', { x: imgPoint.x.toFixed(1), y: imgPoint.y.toFixed(1) });
-            globals.lastX = canvasX;
-            globals.lastY = canvasY;
 
-            // Check for closure if at least 3 points
-            if (globals.currentAnnotation.points.length >= 3) {
-                const firstPoint = globals.currentAnnotation.points[0];
-                const dist = Math.hypot(imgPoint.x - firstPoint.x, imgPoint.y - firstPoint.y);
-                console.log('Checking closure: dist to first point =', dist.toFixed(1));
-                if (dist < 10) {  // Threshold in image coordinates
-                    console.log('Closing polygon!');
-                    globals.currentAnnotation.closed = true;
-                    globals.annotations.push(globals.currentAnnotation);
-                    globals.currentAnnotation = null;
-                    globals.previewPoint = null;
-                    // Update map and timeline after completion
-                    if (globals.currentFrameIndex !== undefined) {
-                        globals.annotationMap[globals.currentFrameIndex] = JSON.parse(JSON.stringify(globals.annotations));
-                    }
-                    globals.annotations.forEach(anno => {
-                        if (anno.label && !(anno.label in globals.classToRow)) {
-                            globals.classToRow[anno.label] = globals.nextRow++;
-                        }
-                    });
-                    drawTimeline();
-                }
+            const ann = findAnnotationByPoint(imgPoint, globals.annotations);
+            if (ann) {
+                console.log('Hit existing annotation (no handle), enabling translation');
+                pushToUndoStack();
+                globals.selectedAnnotation = ann;
+                globals.isTranslating = true;
+                globals.lastX = canvasX;
+                globals.lastY = canvasY;
+                drawImage();
+                return;  // Skip mode-specific logic
             }
-            globals.previewPoint = null;
-        } else {
-            console.log('Unhandled mode in mousedown:', globals.mode);
+
+            // No hit: handle mode-specific actions or deselection
+            if (globals.mode === 'select') {
+                console.log('In select mode - no hit, deselecting');
+                globals.selectedAnnotation = null;
+            } else if (globals.mode === 'rect') {
+                console.log('In rect mode - starting rect');
+                if (!globals.selectedClass) {
+                    console.warn('Cannot start rect: No class selected');
+                    return;
+                }
+                pushToUndoStack();
+                globals.selectedAnnotation = null;  // Deselect any previous
+                globals.currentAnnotation = { type: 'rect', x: imgPoint.x, y: imgPoint.y, width: 0, height: 0, label: globals.selectedClass };
+                globals.annotations.push(globals.currentAnnotation);
+                globals.isDrawing = true;
+                // Record starting image coords for total extent calculation
+                globals.startImgX = imgPoint.x;
+                globals.startImgY = imgPoint.y;
+                globals.lastX = canvasX;
+                globals.lastY = canvasY;
+            } else if (globals.mode === 'polygon') {
+                console.log('In polygon mode - adding point');
+                if (!globals.selectedClass) {
+                    console.warn('Cannot add polygon point: No class selected');
+                    return;
+                }
+                const isNewAnnotation = !globals.currentAnnotation;
+                if (isNewAnnotation) {
+                    console.log('Creating new polygon annotation');
+                    pushToUndoStack();  // Only on first point
+                    globals.selectedAnnotation = null;  // Deselect any previous
+                    globals.currentAnnotation = { type: 'polygon', points: [], closed: false, label: globals.selectedClass };
+                }
+                globals.currentAnnotation.points.push(imgPoint);
+                console.log('Added point to polygon (total points now:', globals.currentAnnotation.points.length, '):', { x: imgPoint.x.toFixed(1), y: imgPoint.y.toFixed(1) });
+                globals.lastX = canvasX;
+                globals.lastY = canvasY;
+
+                // Check for closure if at least 3 points
+                if (globals.currentAnnotation.points.length >= 3) {
+                    const firstPoint = globals.currentAnnotation.points[0];
+                    const dist = Math.hypot(imgPoint.x - firstPoint.x, imgPoint.y - firstPoint.y);
+                    console.log('Checking closure: dist to first point =', dist.toFixed(1));
+                    if (dist < 15) {  // Increased threshold for smoother closure
+                        console.log('Closing polygon!');
+                        globals.currentAnnotation.closed = true;
+                        globals.annotations.push(globals.currentAnnotation);
+                        globals.currentAnnotation = null;
+                        globals.previewPoint = null;
+                        // Update map and timeline after completion
+                        if (globals.currentFrameIndex !== undefined) {
+                            globals.annotationMap[globals.currentFrameIndex] = JSON.parse(JSON.stringify(globals.annotations));
+                        }
+                        globals.annotations.forEach(anno => {
+                            if (anno.label && !(anno.label in globals.classToRow)) {
+                                globals.classToRow[anno.label] = globals.nextRow++;
+                            }
+                        });
+                        drawTimeline();
+                    }
+                }
+                globals.previewPoint = null;
+            } else {
+                console.log('Unhandled mode in mousedown:', globals.mode);
+            }
         }
         drawImage();
         console.log('=== Mousedown end ===');
