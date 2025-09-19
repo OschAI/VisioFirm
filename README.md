@@ -1,4 +1,4 @@
-![VisioFirm](https://github.com/OschAI/VisioFirm/blob/main/examples/visiofirm-logo.gif)
+![VisioFirm](examples/visiofirm-logo.gif)
 
 # VisioFirm: Fast Almost fully-Automated Image Annotation for Computer Vision
 
@@ -34,7 +34,7 @@ Unlike other annotation tool, this one is majoraly focused on CV tasks annotatio
 - **Extensible & Open-Source**: Customize with your own ultralytics models or integrate into pipelines—contributions welcome!
 - **SAM2-base webgpu**: Insta-drawing of annotations via SAM2 with worker offloading and auto-annotation for faster computing!
 
-![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/visiofirmv1.gif) 
+![Annotation Editing Demo](examples/visiofirmv1.gif) 
 
 Perfect — the **Features** section should reflect everything you’ve added in **v1**. Right now, it misses:
 
