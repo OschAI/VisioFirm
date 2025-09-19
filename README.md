@@ -115,7 +115,7 @@ Detection based on pre-trained/zeroshot models:
 
 Video Segmentation using Smart Propagator:
 
-![Annotation Editing Demo](examples/demo_annotation.mp4)
+![Annotation Editing Demo](examples/demo_annotation_.mp4)
 
 ## Installation
 
