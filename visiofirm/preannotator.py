@@ -1,10 +1,4 @@
-# Updated visiofirm/preannotator.py
-# Changes:
-# - In _run_core(), pass lambda progress: setattr(self, 'progress', progress) as progress_callback to CorePreAnnotator
-# - Removed the locals()['last_progress'] hack in run_threaded poll(); use a simple dict for last_progress_pre to track per project
-# - In poll(), use the global last_progress_pre dict for conditional printing
-# - This ensures progress updates from core are reflected and printed only on significant changes
-
+#  visiofirm/preannotator.py
 """
 VisioFirm PreAnnotator API Module
 
