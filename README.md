@@ -111,11 +111,11 @@ Here’s an **expanded Features section** you can drop in:
 
 Detection based on pre-trained/zeroshot models:
 
-![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/AIpreannotator-demo.gif)
+![Annotation Editing Demo](examples/AIpreannotator-demo.gif)
 
 Video Segmentation using Smart Propagator:
 
-![Annotation Editing Demo](https://github.com/OschAI/VisioFirm/blob/main/examples/demo_annotation.mp4) 
+![Annotation Editing Demo](examples/demo_annotation.mp4) 
 
 ## Installation
 
