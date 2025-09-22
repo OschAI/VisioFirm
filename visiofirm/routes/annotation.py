@@ -719,8 +719,8 @@ async def export_annotations(
     split_ratios = data.get('split_ratios', {'train': 100})
     extract_frames = data.get('extract_frames', False)
     semantic = data.get('semantic', False)
-    user_export_path = data.get('export_path') or data.get('save_path')
-    local_export = data.get('local_export', False) or bool(user_export_path)
+    user_export_path = data.get('export_path')
+    local_export = data.get('local_export', False)
     print(f"local_export after get: {local_export} (type: {type(local_export)})", flush=True)
     print(f"user_export_path: {user_export_path}", flush=True)
     
