@@ -9,7 +9,7 @@
 
 -------
 > [!IMPORTANT]
-> VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1 ✨
+> VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1.0.1 ✨
 > * **Classification and Preannotation**: Predict and pre-suggest image classes using **OpenAI CLIP pretrained model**, enabling near-automatic labeling.
 > * **Video Support & Label Propagation**: New **VFTracker** auto-labeling with frame-to-frame propagation: choose between: (1) **SmartPropagator** – Leverages **SAM2 + pre/post processing** for accurate, cumulative tracking. Annotate the first frame, propagate across the sequence. (2) **OpenCV Trackers** – Full support (CSRT, KCF, Boosting, MIL, TLD, MedianFlow, MOSSE, GOTURN) and (3) **Interpolation** – Classic propagation between `[labeled_start]` and `[labeled_end]`.
 > * **Ultralytics Model Support**: Works with **YOLOv12 → YOLOv5**, including **YOLOv8-world** for open-vocab pre-annotation.
