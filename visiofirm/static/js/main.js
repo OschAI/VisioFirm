@@ -869,7 +869,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('Please enter the save path');
                 return;
             }
-            data.save_path = savePath;
+            data.local_export = true;
+            data.export_path = savePath;
         }
         showLoadingOverlay('Exporting...');
         try {
@@ -885,7 +886,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (contentType && contentType.includes('application/json')) {
                 const result = await response.json();
                 if (result.success) {
-                    showSuccessModal(`Export saved to ${result.saved_file}`);
+                    showSuccessModal(`Export saved to ${result.saved_path}`);
                 } else {
                     throw new Error(result.error || 'Unknown error');
                 }
