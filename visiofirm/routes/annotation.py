@@ -713,11 +713,14 @@ async def export_annotations(
     print(f"local_export from data: {data.get('local_export')} (type: {type(data.get('local_export'))})", flush=True)
     
     format = data.get('format')
+    images_list = data.get('images', [])  # For image projects
     videos = data.get('videos') or []
+    split_choices = data.get('split_choices', ['train'])
+    split_ratios = data.get('split_ratios', {'train': 100})
     extract_frames = data.get('extract_frames', False)
     semantic = data.get('semantic', False)
-    user_export_path = data.get('export_path')
-    local_export = data.get('local_export', False)
+    user_export_path = data.get('export_path') or data.get('save_path')
+    local_export = data.get('local_export', False) or bool(user_export_path)
     print(f"local_export after get: {local_export} (type: {type(local_export)})", flush=True)
     print(f"user_export_path: {user_export_path}", flush=True)
     
@@ -730,49 +733,61 @@ async def export_annotations(
         is_video_project = proj.get_setup_type().startswith('Video ')
         print(f"Is video project: {is_video_project}", flush=True)
         
-        # Fetch all videos for mapping/fallback
-        all_videos = proj.get_videos()
-        internal_ids = [v[0] for v in all_videos]
-        internal_paths = [v[1] for v in all_videos]
-        print(f"All videos from project: {all_videos}", flush=True)
-        print(f"Internal IDs: {internal_ids}", flush=True)
-        print(f"Internal paths: {internal_paths}", flush=True)
+        # For image projects: handle selected_images
+        selected_images = None
+        if not is_video_project:
+            selected_images = images_list if images_list else None
+            print(f"Incoming images: {images_list} -> selected_images: {selected_images}", flush=True)
         
-        if is_video_project and not videos:
-            videos = internal_paths
-            print(f"Fetched all videos (paths): {len(videos)}", flush=True)
-        else:
-            print(f"Incoming videos: {videos}", flush=True)
-            # Map incoming videos (IDs or paths) to internal paths
-            mapped_videos = []
-            for vid in videos:
-                if not vid: 
-                    continue
-                try:
-                    vid_int = int(vid)  # Handle string '1' -> int 1
-                    if vid_int in internal_ids:
-                        idx = internal_ids.index(vid_int)
-                        mapped_path = internal_paths[idx]
-                        mapped_videos.append(mapped_path)
-                        print(f"Mapped ID '{vid}' to path '{mapped_path}'", flush=True)
-                    elif vid in internal_paths:
-                        # Already a path: keep it
-                        mapped_videos.append(vid)
-                        print(f"Direct path match: '{vid}'", flush=True)
-                    else:
-                        print(f"Warning: No match for '{vid}' (not ID or path)", flush=True)
-                except ValueError:
-                    # Not an int: treat as potential path
-                    if vid in internal_paths:
-                        mapped_videos.append(vid)
-                    else:
-                        print(f"Warning: Invalid non-numeric '{vid}'", flush=True)
+        # Video handling only for video projects
+        if is_video_project:
+            # Fetch all videos for mapping/fallback
+            all_videos = proj.get_videos()
+            internal_ids = [v[0] for v in all_videos]
+            internal_paths = [v[1] for v in all_videos]
+            print(f"All videos from project: {all_videos}", flush=True)
+            print(f"Internal IDs: {internal_ids}", flush=True)
+            print(f"Internal paths: {internal_paths}", flush=True)
             
-            videos = mapped_videos
-            print(f"Final videos for exporter: {videos}", flush=True)
+            if not videos:
+                videos = internal_paths
+                print(f"Fetched all videos (paths): {len(videos)}", flush=True)
+            else:
+                print(f"Incoming videos: {videos}", flush=True)
+                # Map incoming videos (IDs or paths) to internal paths
+                mapped_videos = []
+                for vid in videos:
+                    if not vid: 
+                        continue
+                    try:
+                        vid_int = int(vid)  # Handle string '1' -> int 1
+                        if vid_int in internal_ids:
+                            idx = internal_ids.index(vid_int)
+                            mapped_path = internal_paths[idx]
+                            mapped_videos.append(mapped_path)
+                            print(f"Mapped ID '{vid}' to path '{mapped_path}'", flush=True)
+                        elif vid in internal_paths:
+                            # Already a path: keep it
+                            mapped_videos.append(vid)
+                            print(f"Direct path match: '{vid}'", flush=True)
+                        else:
+                            print(f"Warning: No match for '{vid}' (not ID or path)", flush=True)
+                    except ValueError:
+                        # Not an int: treat as potential path
+                        if vid in internal_paths:
+                            mapped_videos.append(vid)
+                        else:
+                            print(f"Warning: Invalid non-numeric '{vid}'", flush=True)
+                
+                videos = mapped_videos
+                print(f"Final videos for exporter: {videos}", flush=True)
+            
+            if not videos:
+                raise ValueError("No valid videos found or matched in project")
         
-        if not videos:
-            raise ValueError("No valid videos found or matched in project")
+        # For image projects: treat empty selected_images as all annotated
+        if not is_video_project and selected_images is not None and not selected_images:
+            selected_images = None
         
         # Determine exporter path based on mode
         exporter_path = user_export_path if local_export else TMP_FOLDER
@@ -782,6 +797,9 @@ async def export_annotations(
             project=proj,
             path=exporter_path, 
             format=format,
+            selected_images=selected_images,
+            split_choices=split_choices,
+            split_ratios=split_ratios,
             videos=videos,
             extract_frames=extract_frames,
             semantic=semantic
@@ -819,7 +837,7 @@ async def export_annotations(
         print(f"Export failed for {project_name}: {e}", flush=True)
         logger.error(f"Export failed for {project_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-                
+                        
 @router.post('/delete_preannotations/{project_name}')
 async def delete_preannotations(
     project_name: str,
