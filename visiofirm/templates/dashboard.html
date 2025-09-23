@@ -350,6 +350,27 @@
 </style>
 
 <script type="module">
+    function logScriptMimeType(scriptUrl) {
+        fetch(scriptUrl, { method: 'HEAD', cache: 'no-cache' })
+            .then(response => {
+                const contentType = response.headers.get('Content-Type');
+                console.log(`MIME type for ${scriptUrl}: ${contentType || 'Not specified'}`);
+            })
+            .catch(error => {
+                console.error(`Error fetching MIME type for ${scriptUrl}:`, error);
+            });
+    }
+
+    // Log MIME types for imported scripts
+    document.addEventListener('DOMContentLoaded', () => {
+        const scripts = [
+            '/static/js/jslib/plotly-2.35.2.min.js',
+            '/static/js/importHandler.js',
+            '/static/js/spinnerLoader.js'
+        ];
+        scripts.forEach(scriptUrl => logScriptMimeType(scriptUrl));
+    });
+    
     import { initDropZone, initImportModal, getStoredUploadId, clearStoredData } from '/static/js/importHandler.js';
     import { showLoadingOverlay, hideLoadingOverlay } from '/static/js/spinnerLoader.js';
 

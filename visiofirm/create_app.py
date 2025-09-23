@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends, status, Request  # FIXED: Add Request here
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -15,10 +15,29 @@ from visiofirm.routes.dashboard import get_current_user_optional
 import os
 import mimetypes
 
-# Force MIME type override immediately after import (fixes Windows registry issue)
-mimetypes.types_map['.js'] = 'application/javascript'
-mimetypes.types_map['.min.js'] = 'application/javascript'
-mimetypes.types_map['.mjs'] = 'application/javascript'
+# Force MIME type override at module level (fallback, but we'll override in custom class anyway)
+mimetypes.add_type("application/javascript", ".js", strict=True)
+mimetypes.add_type("application/javascript", ".min.js", strict=True)
+mimetypes.add_type("application/javascript", ".mjs", strict=True)
+
+# Custom StaticFiles to force JS MIME type
+from starlette.staticfiles import StaticFiles as StarletteStaticFiles
+from starlette.responses import FileResponse as StarletteFileResponse
+from starlette.types import Scope, Receive, Send
+import typing
+
+class CustomStaticFiles(StarletteStaticFiles):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["path"].endswith((".js", ".min.js", ".mjs")):
+            # Temporarily patch guess_type for this request
+            original_guess = mimetypes.guess_type
+            try:
+                mimetypes.guess_type = lambda path, strict=None: ("application/javascript", None)
+                await super().__call__(scope, receive, send)
+            finally:
+                mimetypes.guess_type = original_guess
+        else:
+            await super().__call__(scope, receive, send)
 
 app_instance = None
 
@@ -42,11 +61,11 @@ def create_app():
         templates_dir = os.path.join(module_dir, "templates")
         static_dir = os.path.join(module_dir, "static")
 
-        # Remove the update() call from here—it's now at module level
-        
         templates = Jinja2Templates(directory=templates_dir)
         app_instance.state.templates = templates
-        app_instance.mount("/static", StaticFiles(directory=static_dir), name="static")
+        
+        # Mount with custom class to force JS MIME types
+        app_instance.mount("/static", CustomStaticFiles(directory=static_dir), name="static")
        
         # Config
         app_instance.state.max_content_length = 20 * 1024 * 1024 # 20MB limit
@@ -61,7 +80,6 @@ def create_app():
         app_instance.include_router(import_router)
         app_instance.include_router(annotation_router)
        
-        # FIXED: Type the 'request' param as Request to inject the HTTP Request object
         @app_instance.get("/")
         async def root(request: Request, current_user: User | None = Depends(get_current_user_optional)):
             if current_user:
