@@ -13,6 +13,7 @@ from visiofirm.security import SECRET_KEY
 from visiofirm.models.user import User
 from visiofirm.routes.dashboard import get_current_user_optional
 import os
+import mimetypes
 
 app_instance = None
 
@@ -35,7 +36,12 @@ def create_app():
         module_dir = os.path.dirname(__file__)
         templates_dir = os.path.join(module_dir, "templates")
         static_dir = os.path.join(module_dir, "static")
-       
+
+        mimetypes.types_map.update({
+            '.js': 'application/javascript',
+            '.min.js': 'application/javascript',  # Explicit for .min.js if splitext behaves oddly
+        })
+        
         templates = Jinja2Templates(directory=templates_dir)
         app_instance.state.templates = templates
         app_instance.mount("/static", StaticFiles(directory=static_dir), name="static")
