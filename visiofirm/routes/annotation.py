@@ -611,6 +611,148 @@ async def save_annotations(
         print(f"Error saving annotations for {image_filename} in {project_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post('/save_video_frame_annotations/{project_name}/{video_id}')
+async def save_video_frame_annotations(
+    project_name: str,
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    data = await request.json()
+    tracker.log_step('Saving video frame annotations', details={
+        'project_name': project_name, 'video_id': video_id, 
+        'frame_number': data.get('frame_number'), 
+        'annotations_count': len(data.get('annotations', []))
+    })
+    try:
+        frame_number_raw = data.get('frame_number')
+        if frame_number_raw is None:
+            raise ValueError('frame_number is required')
+        frame_number = int(frame_number_raw)
+        if frame_number < 0:
+            raise ValueError('frame_number must be non-negative')
+        raw_annotations = data.get('annotations', [])
+        if not isinstance(raw_annotations, list):
+            raise ValueError('annotations must be a list')
+
+        print(f"Saving {len(raw_annotations)} annotations for frame {frame_number} in video {video_id} (project {project_name})...")
+
+        project_path = os.path.join(PROJECTS_FOLDER, project_name)
+        project = Project(project_name, "", "", project_path)
+        setup_type = project.get_setup_type()
+
+        with sqlite3.connect(project.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Get video details (path, fps, w/h) for potential creation
+            cursor.execute('SELECT absolute_path, fps, width, height FROM Videos WHERE video_id = ?', (video_id,))
+            video_result = cursor.fetchone()
+            if not video_result:
+                raise ValueError(f'Video {video_id} not found')
+            video_path, fps, video_w, video_h = video_result
+            timestamp = frame_number / fps if fps and fps > 0 else 0.0
+
+            # Resolve or create image_id via Frames
+            cursor.execute('SELECT image_id FROM Frames WHERE video_id = ? AND frame_number = ?', (video_id, frame_number))
+            frame_result = cursor.fetchone()
+            if frame_result:
+                image_id = frame_result[0]
+            else:
+                # Create Images entry if missing
+                absolute_image_path = f"{video_path}#{frame_number}"
+                cursor.execute('SELECT image_id FROM Images WHERE absolute_path = ?', (absolute_image_path,))
+                img_result = cursor.fetchone()
+                if img_result:
+                    image_id = img_result[0]
+                else:
+                    cursor.execute('INSERT INTO Images (absolute_path, width, height) VALUES (?, ?, ?)', 
+                                   (absolute_image_path, video_w, video_h))
+                    image_id = cursor.lastrowid
+                # Create Frames entry
+                cursor.execute('INSERT INTO Frames (video_id, image_id, frame_number, timestamp) VALUES (?, ?, ?, ?)', 
+                               (video_id, image_id, frame_number, timestamp))
+
+            # Determine table: uniform per-frame (use first anno's flag; assume consistent)
+            is_pre = raw_annotations[0].get('isPreannotation', False) if raw_annotations else False
+            table_name = 'Preannotations' if is_pre else 'Annotations'
+            has_confidence = is_pre  # Annotations lacks confidence column
+
+            # Delete existing for this image_id/table
+            cursor.execute(f'DELETE FROM {table_name} WHERE image_id = ?', (image_id,))
+
+            saved_count = 0
+            for anno in tqdm(raw_annotations, desc=f"Saving frame {frame_number}", unit="anno", leave=False):
+                label = anno.get('label', '')
+                anno_type = anno.get('type', 'rect')
+                # Map frontend type to backend
+                db_type = 'bbox' if anno_type in ['rect', 'bbox'] else 'segmentation' if anno_type == 'polygon' else anno_type
+                x = y = width = height = rotation = segmentation = None
+                confidence = 1.0  # Default
+
+                if db_type == 'segmentation':
+                    points = anno.get('points', [])
+                    if points:
+                        points_flat = []
+                        for p in points:
+                            points_flat.extend([float(p.get('x', 0)), float(p.get('y', 0))])
+                        segmentation = json.dumps(points_flat)
+                    else:
+                        logger.warning(f"Skipping empty polygon for {label} in frame {frame_number}")
+                        continue
+                else:  # bbox/rect
+                    if anno.get('bbox') and len(anno.get('bbox')) == 4:
+                        bbox = list(map(float, anno['bbox']))
+                        x, y, width, height = bbox
+                    else:
+                        x = float(anno.get('x', 0))
+                        y = float(anno.get('y', 0))
+                        width = float(anno.get('width', 0))
+                        height = float(anno.get('height', 0))
+                    if width <= 0 or height <= 0:
+                        logger.warning(f"Invalid bbox for {label} in frame {frame_number}: w={width}, h={height}")
+                        continue
+                    rotation = float(anno.get('rotation', 0)) if 'Oriented' in setup_type else 0.0
+
+                # Insert (conditional on type/table)
+                if db_type == 'segmentation':
+                    if is_pre:
+                        cursor.execute('''
+                            INSERT INTO Preannotations (image_id, type, class_name, segmentation, confidence)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (image_id, db_type, label, segmentation, confidence))
+                    else:
+                        cursor.execute('''
+                            INSERT INTO Annotations (image_id, type, class_name, segmentation)
+                            VALUES (?, ?, ?, ?)
+                        ''', (image_id, db_type, label, segmentation))
+                else:  # bbox
+                    if is_pre:
+                        cursor.execute('''
+                            INSERT INTO Preannotations (image_id, type, class_name, x, y, width, height, rotation, confidence)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (image_id, db_type, label, x, y, width, height, rotation, confidence))
+                    else:
+                        cursor.execute('''
+                            INSERT INTO Annotations (image_id, type, class_name, x, y, width, height, rotation)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (image_id, db_type, label, x, y, width, height, rotation))
+
+                saved_count += 1
+
+            conn.commit()
+            logger.info(f"Saved {saved_count} annotations to {table_name} for image_id {image_id} (frame {frame_number}, video {video_id})")
+
+        tracker.log_substep('Frame annotations saved', details={'saved_count': saved_count})
+        tracker.log_step('Video frame save completed')
+        print(f"Saved {saved_count}/{len(raw_annotations)} annotations for frame {frame_number}")
+        return {'success': True, 'saved_count': saved_count}
+
+    except Exception as e:
+        tracker.log_error(e, step='Save video frame annotations')
+        logger.error(f"Error saving video frame annotations: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @router.post('/delete_images')
 async def delete_images(
     request: Request,
