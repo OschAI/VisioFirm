@@ -26,6 +26,7 @@
                     <div class="menu-dropdown" style="display: none;">
                         <button class="overview-btn" data-project="{{ project.name }}">Overview</button>
                         <button class="import-btn" data-project="{{ project.name }}">Add Images</button>
+                        <button class="add-classes-btn" data-project="{{ project.name }}">Add Classes</button>
                         <button class="delete-btn" data-project="{{ project.name }}">Delete</button>
                     </div>
                 </div>
@@ -192,6 +193,25 @@
     </div>
 </div>
 
+<div class="modal" id="add-classes-modal">
+    <div class="modal-content">
+        <button class="close-btn add-classes-close-btn">×</button>
+        <h2 class="modal-title">Add Classes to <span id="add-classes-project-name" class="project-name-highlight"></span></h2>
+        <form id="add-classes-form">
+            <div class="form-group">
+                <label class="add-classes-label">New Class Names (separate with commas, dots, or semicolons)</label>
+                <input type="text" id="new-class-names" name="class_names" placeholder="e.g., drone, bicycle, helmet">
+                <div class="class-suggestions">
+                    <input type="text" id="new-class-search" placeholder="Search COCO classes...">
+                    <div id="new-class-tags" class="class-tags"></div>
+                </div>
+                <p class="existing-classes" id="existing-classes-list" style="margin-top: 10px; font-style: italic; color: #666;"></p>
+            </div>
+            <button type="submit" class="create-btn" disabled>Add Classes</button>
+        </form>
+    </div>
+</div>
+
 <link rel="stylesheet" href="/static/css/setup.css">
 <!-- <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script> -->
 <script type="module" src="/static/js/jslib/plotly-2.35.2.min.js"></script>
@@ -350,27 +370,6 @@
 </style>
 
 <script type="module">
-    function logScriptMimeType(scriptUrl) {
-        fetch(scriptUrl, { method: 'HEAD', cache: 'no-cache' })
-            .then(response => {
-                const contentType = response.headers.get('Content-Type');
-                console.log(`MIME type for ${scriptUrl}: ${contentType || 'Not specified'}`);
-            })
-            .catch(error => {
-                console.error(`Error fetching MIME type for ${scriptUrl}:`, error);
-            });
-    }
-
-    // Log MIME types for imported scripts
-    document.addEventListener('DOMContentLoaded', () => {
-        const scripts = [
-            '/static/js/jslib/plotly-2.35.2.min.js',
-            '/static/js/importHandler.js',
-            '/static/js/spinnerLoader.js'
-        ];
-        scripts.forEach(scriptUrl => logScriptMimeType(scriptUrl));
-    });
-    
     import { initDropZone, initImportModal, getStoredUploadId, clearStoredData } from '/static/js/importHandler.js';
     import { showLoadingOverlay, hideLoadingOverlay } from '/static/js/spinnerLoader.js';
 
@@ -421,6 +420,12 @@
             'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
         ];
 
+        const addClassesModal = document.getElementById('add-classes-modal');
+        const addClassesForm = document.getElementById('add-classes-form');
+        const addClassesSubmitBtn = addClassesForm.querySelector('.create-btn');
+        let currentAddClassesProject = null;
+        let existingClasses = [];
+
         // Initialize class tags
         function renderClassTags(filter = '') {
             classTags.innerHTML = '';
@@ -454,6 +459,46 @@
                     renderClassTags(classSearch.value); // Re-render with current filter
                 });
                 classTags.appendChild(tag);
+            });
+        }
+
+        function renderNewClassTags(filter = '', existingClasses = []) {
+            const newClassTags = document.getElementById('new-class-tags');
+            const newClassNamesInput = document.getElementById('new-class-names');
+            newClassTags.innerHTML = '';
+            // Normalize current classes for comparison (trim and lowercase)
+            const currentClasses = newClassNamesInput.value
+                .split(/[,.;]\s*/)
+                .map(c => c.trim().toLowerCase())
+                .filter(c => c);
+            const filteredClasses = cocoClasses.filter(c => 
+                c.toLowerCase().includes(filter.toLowerCase()) && 
+                c !== '__background__' && 
+                !existingClasses.includes(c.toLowerCase())  // Exclude existing
+            );
+            filteredClasses.forEach(cls => {
+                const tag = document.createElement('span');
+                // Check if the class is in currentClasses (case-insensitive)
+                const isSelected = currentClasses.includes(cls.toLowerCase());
+                tag.className = `class-tag ${isSelected ? 'selected' : ''}`;
+                tag.textContent = cls;
+                tag.addEventListener('click', () => {
+                    let updatedClasses = newClassNamesInput.value
+                        .split(/[,.;]\s*/)
+                        .filter(c => c.trim());
+                    const clsLower = cls.toLowerCase();
+                    const index = updatedClasses.findIndex(c => c.trim().toLowerCase() === clsLower);
+                    if (index !== -1) {
+                        // Remove the class
+                        updatedClasses.splice(index, 1);
+                    } else {
+                        // Add the class
+                        updatedClasses.push(cls);
+                    }
+                    newClassNamesInput.value = updatedClasses.join(', ');
+                    renderNewClassTags(document.getElementById('new-class-search').value, existingClasses); // Re-render with current filter
+                });
+                newClassTags.appendChild(tag);
             });
         }
 
@@ -862,6 +907,114 @@
                 document.getElementById('import-compress-message').style.display = 'none';
                 importSubmitBtn.disabled = true;
             }
+        });
+
+        document.querySelectorAll('.add-classes-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                currentAddClassesProject = btn.dataset.project;
+                document.getElementById('add-classes-project-name').textContent = currentAddClassesProject;
+                addClassesModal.style.display = 'flex';
+                addClassesSubmitBtn.disabled = true;
+
+                // Fetch existing classes
+                try {
+                    const response = await fetch(`/dashboard/get_project_classes/${currentAddClassesProject}`);
+                    const result = await response.json();
+                    if (result.success) {
+                        existingClasses = result.classes.map(cls => cls.toLowerCase());
+                        document.getElementById('existing-classes-list').textContent = 
+                            existingClasses.length > 0 ? 
+                            `Existing classes: ${result.classes.join(', ')} (new ones will be added below)` : 
+                            'No existing classes.';
+                    } else {
+                        throw new Error(result.error || 'Failed to fetch classes');
+                    }
+                } catch (error) {
+                    console.error('Error fetching existing classes:', error);
+                    document.getElementById('existing-classes-list').textContent = 'Could not load existing classes.';
+                    existingClasses = [];
+                }
+
+                // Reset and render tags
+                document.getElementById('new-class-names').value = '';
+                document.getElementById('new-class-search').value = '';
+                renderNewClassTags('', existingClasses);
+                const newClassNamesInput = document.getElementById('new-class-names');
+                const newClassSearchInput = document.getElementById('new-class-search');
+                const inputHandler = () => {
+                    const value = newClassNamesInput.value;
+                    addClassesSubmitBtn.disabled = !value.trim();
+                    renderNewClassTags(newClassSearchInput.value, existingClasses);
+                };
+                const searchHandler = () => {
+                    renderNewClassTags(newClassSearchInput.value, existingClasses);
+                };
+                newClassNamesInput.addEventListener('input', inputHandler);
+                newClassSearchInput.addEventListener('input', searchHandler);
+            });
+        });
+
+        const addClassesCloseBtn = document.querySelector('.add-classes-close-btn');
+        addClassesCloseBtn.addEventListener('click', () => {
+            addClassesModal.style.display = 'none';
+            currentAddClassesProject = null;
+            existingClasses = [];
+            // newClassNamesInput.removeEventListener('input', inputHandler);
+            // newClassSearchInput.removeEventListener('input', searchHandler);
+        });
+
+        addClassesForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentAddClassesProject) {
+                alert('No project selected');
+                return;
+            }
+            const classNames = document.getElementById('new-class-names').value.trim();
+            if (!classNames) {
+                alert('Please enter new class names');
+                return;
+            }
+            const classesToAdd = classNames.split(/[,.;]\s*/).map(c => c.trim()).filter(c => c && !existingClasses.includes(c.toLowerCase()));
+
+            if (classesToAdd.length === 0) {
+                alert('No new classes to add (all entered are already existing).');
+                return;
+            }
+
+            try {
+                addClassesSubmitBtn.disabled = true;
+                const response = await fetch(`/dashboard/add_classes/${currentAddClassesProject}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ classes: classesToAdd })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    setTimeout(() => {
+                        addClassesModal.style.display = 'none';
+                        location.reload();  // Reload to show updated classes in annotation view
+                    }, 1000);
+                } else {
+                    alert(result.error || 'Failed to add classes');
+                }
+            } catch (error) {
+                console.error('Add classes error:', error);
+                alert('Failed to add classes: ' + error.message);
+            } finally {
+                addClassesSubmitBtn.disabled = false;
+            }
+        });
+
+        // Add input listeners for new classes modal
+        document.getElementById('new-class-names').addEventListener('input', () => {
+            const value = document.getElementById('new-class-names').value;
+            addClassesSubmitBtn.disabled = !value.trim();
+            renderNewClassTags(document.getElementById('new-class-search').value, existingClasses);
+        });
+
+        document.getElementById('new-class-search').addEventListener('input', () => {
+            renderNewClassTags(document.getElementById('new-class-search').value, existingClasses);
         });
 
         document.querySelectorAll('.menu-btn').forEach(btn => {
