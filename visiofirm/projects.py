@@ -347,6 +347,30 @@ class VFProjects:
             'class_distribution': class_distribution,
             'annotations_per_image': annotations_per_image
         }
+        
+    @classmethod
+    def add_classes_to_project(cls, name, classes, projects_folder=PROJECTS_FOLDER):
+        """Add classes to an existing project via the Python API.
+        
+        Args:
+            name (str): Project name.
+            classes (list): List of class names to add.
+            projects_folder (str, optional): Custom projects root folder.
+        
+        Returns:
+            bool: True if added successfully.
+        
+        Raises:
+            ValueError: If project not found or classes invalid.
+        """
+        if not isinstance(classes, list) or len(classes) == 0:
+            raise ValueError("classes must be a non-empty list")
+        project = cls.get_project(name, projects_folder)
+        if not project:
+            raise ValueError(f"Project '{name}' not found")
+        project.add_classes(classes)
+        logger.info(f"Added {len(classes)} classes to project '{name}': {classes}")
+        return True
 
     @classmethod
     def plot_project_overview(cls, name, projects_folder=PROJECTS_FOLDER, output_dir=None, show=True):
