@@ -164,3 +164,45 @@ async def get_project_overview(request: Request, project_name: str, current_user
     except Exception as e:
         logger.exception("Error fetching overview for %s", project_name)
         raise HTTPException(status_code=500, detail=f'Server error: {str(e)}')
+
+@router.post("/add_classes/{project_name}")
+async def add_classes(
+    request: Request,
+    project_name: str,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    data = await request.json()
+    classes_to_add = data.get('classes', [])  # Expect list of strings
+    if not classes_to_add or not isinstance(classes_to_add, list):
+        raise HTTPException(status_code=400, detail='classes must be a non-empty list of strings')
+    
+    from visiofirm.projects import VFProjects
+    project = VFProjects.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail='Project not found')
+    
+    try:
+        project.add_classes(classes_to_add)
+        logger.info(f"Added {len(classes_to_add)} classes to project {project_name}: {classes_to_add}")
+        return {"success": True, "added": len(classes_to_add), "classes": classes_to_add}
+    except Exception as e:
+        logger.error(f"Error adding classes to {project_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+# Add this endpoint to dashboard.py, after get_project_overview
+@router.get("/get_project_classes/{project_name}")
+async def get_project_classes(request: Request, project_name: str, current_user: User = Depends(get_current_user_from_cookie)):
+    safe_name = secure_filename(project_name)
+    project_path = os.path.join(PROJECTS_FOLDER, safe_name)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail='Project not found')
+    
+    try:
+        from visiofirm.models import Project
+        project = Project(project_name, '', '', project_path)
+        classes = project.get_classes() or []
+        logger.info(f"Retrieved {len(classes)} classes for project {project_name}: {classes}")
+        return {"success": True, "classes": classes}
+    except Exception as e:
+        logger.exception("Error fetching classes for %s", project_name)
+        raise HTTPException(status_code=500, detail=f'Server error: {str(e)}')
