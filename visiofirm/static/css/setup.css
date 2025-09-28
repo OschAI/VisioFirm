@@ -113,8 +113,8 @@
 
 .menu-dropdown {
     position: absolute;
-    right: 0px;
-    top: -48px;
+    right: 15%;
+    bottom: 0%;
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -153,6 +153,21 @@
     gap: 8px;
 }
 
+.add-classes-btn {
+    padding: 8px 16px;
+    border: none;
+    background: none;
+    color: #0026ff;
+    color: var(--danger-color);
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .delete-btn {
     padding: 8px 16px;
     border: none;
@@ -168,6 +183,9 @@
 }
 
 .import-btn:hover {
+    background: rgba(37, 205, 247, 0.1);
+}
+.add-classes-btn:hover {
     background: rgba(37, 205, 247, 0.1);
 }
 .delete-btn:hover {
