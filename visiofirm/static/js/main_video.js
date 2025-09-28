@@ -400,6 +400,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
+            const result = await saveAllModifiedFrames();
+            if (result.total === 0) {
+                showToast('No frames to save. Proceeding to commit...', 'info');
+            }
             if (!globals.currentVideoId) {
                 alert('No video loaded.');
                 return;
@@ -416,7 +420,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast('All preannotations transferred to annotations for this video.', 'success');
             } catch (e) {
                 console.error('Commit error:', e);
-                alert('Error committing preannotations: ' + e.message);
+                showToast('Error committing preannotations: ' + e.message, 'error');
             }
         });
     }
@@ -1682,6 +1686,109 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupTimelineEventListeners(updateFrameFromMouse, drawTimeline, playFrame);
     }
 
+    async function saveCurrentFrame() {
+        await saveAllFrames(); 
+    }
+
+    async function saveAllModifiedFrames() {
+        if (!globals.currentVideoId || globals.frames.length === 0) {
+            showToast('No video or frames loaded.', 'warning');
+            return { saved: 0, total: 0 };
+        }
+        const modifiedFrames = [];
+        for (let i = 0; i < globals.frames.length; i++) {
+            if (globals.annotationMap[i] && globals.annotationMap[i].length > 0) {
+                modifiedFrames.push(i);
+            }
+        }
+        if (modifiedFrames.length === 0) {
+            showToast('No modified frames to save.', 'info');
+            return { saved: 0, total: 0 };
+        }
+        console.log(`Saving ${modifiedFrames.length} modified frames...`);
+        showToast(`Saving ${modifiedFrames.length} frames...`, 'info');
+        let savedCount = 0;
+        let failedCount = 0;
+        for (let i of modifiedFrames) {
+            const frameNum = globals.frames[i].frame_number;
+            const payload = {
+                frame_number: frameNum,
+                annotations: globals.annotationMap[i].map(anno => ({ ...anno }))
+            };
+            try {
+                const response = await fetch(`/annotation/save_video_frame_annotations/${projectName}/${globals.currentVideoId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => response.text());
+                    console.error(`Save failed for frame ${frameNum}:`, err);
+                    failedCount++;
+                    continue;
+                }
+                const result = await response.json();
+                savedCount += result.saved_count || globals.annotationMap[i].length;
+            } catch (e) {
+                console.error(`Save error for frame ${frameNum}:`, e);
+                failedCount++;
+            }
+        }
+        const total = modifiedFrames.length;
+        if (failedCount > 0) {
+            showToast(`${savedCount} saved, ${failedCount} failed out of ${total} frames.`, 'warning');
+        } else {
+            showToast(`Saved all ${total} modified frames.`, 'success');
+        }
+        updateMapAndTimeline();  // Refresh timeline
+        return { saved: savedCount, total };
+    }
+
+    async function saveAllFrames() {
+        if (!globals.currentVideoId || globals.frames.length === 0) {
+            showToast('No video or frames loaded.', 'warning');
+            return { saved: 0, total: 0 };
+        }
+        const totalFrames = globals.frames.length;
+        console.log(`Saving all ${totalFrames} frames...`);
+        showToast(`Saving ${totalFrames} frames...`, 'info');
+        let savedCount = 0;
+        let failedCount = 0;
+        for (let i = 0; i < totalFrames; i++) {
+            const frameNum = globals.frames[i].frame_number;
+            const annotations = globals.annotationMap[i] || [];  // Always send, even empty
+            const payload = {
+                frame_number: frameNum,
+                annotations: annotations.map(anno => ({ ...anno }))
+            };
+            try {
+                const response = await fetch(`/annotation/save_video_frame_annotations/${projectName}/${globals.currentVideoId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => response.text());
+                    console.error(`Save failed for frame ${frameNum}:`, err);
+                    failedCount++;
+                    continue;
+                }
+                const result = await response.json();
+                savedCount += result.saved_count || annotations.length;
+            } catch (e) {
+                console.error(`Save error for frame ${frameNum}:`, e);
+                failedCount++;
+            }
+        }
+        if (failedCount > 0) {
+            showToast(`${savedCount} saved, ${failedCount} failed out of ${totalFrames} frames.`, 'warning');
+        } else {
+            showToast(`Saved all ${totalFrames} frames.`, 'success');
+        }
+        updateMapAndTimeline();  // Refresh timeline
+        return { saved: savedCount, total: totalFrames };
+    }
+
     async function reloadAnnotations() {
         if (!globals.currentItem) return;
         const videoId = globals.currentItem.dataset.videoId;
@@ -2101,7 +2208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Ctrl+S: save shortcut
         if (e.ctrlKey && e.key && e.key.toLowerCase() === 's') {
             e.preventDefault();
-            if (saveBtn) saveBtn.click();
+            saveAllFrames();
         }
 
         // Left/Right arrow navigation
