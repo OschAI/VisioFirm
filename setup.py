@@ -10,9 +10,6 @@ def get_version():
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
 
-# with open('requirements.txt', 'r', encoding='utf-8') as f:
-#     install_requires = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-
 setup(
     name='visiofirm',
     version=get_version(),
