@@ -1,5 +1,5 @@
 # visiofirm/routes/annotation.py
-from fastapi import APIRouter, Request, Depends, HTTPException, File, Query
+from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from visiofirm.security import get_current_user_from_cookie, User
@@ -20,7 +20,7 @@ import logging
 import sqlite3
 from werkzeug.utils import secure_filename
 from typing import Optional
-import shutil
+import tempfile
 
 router = APIRouter(prefix="/annotation")
 module_dir = os.path.dirname(__file__)
@@ -841,19 +841,20 @@ async def download_images(
 async def export_annotations(
     project_name: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user_from_cookie)
 ):
     print(f"Endpoint hit for project: {project_name}", flush=True)
     tracker_app = request.app.tracker
-    
+
     # Log raw body to see EXACT payload
     body = await request.body()
     print(f"Raw request body: {body.decode('utf-8')}", flush=True)
-    
+
     data = await request.json()
     print(f"Received export data: {data}", flush=True)
     print(f"local_export from data: {data.get('local_export')} (type: {type(data.get('local_export'))})", flush=True)
-    
+
     format = data.get('format')
     images_list = data.get('images', [])  # For image projects
     videos = data.get('videos') or []
@@ -862,25 +863,28 @@ async def export_annotations(
     extract_frames = data.get('extract_frames', False)
     semantic = data.get('semantic', False)
     user_export_path = data.get('export_path') or data.get('save_path')
-    local_export = data.get('local_export', False) or bool(user_export_path)
-    print(f"local_export after get: {local_export} (type: {type(local_export)})", flush=True)
-    print(f"user_export_path: {user_export_path}", flush=True)
-    
+    local_export = data.get('local_export', False)
+    # FIXED: Only consider user_export_path if explicitly local_export=True (ignore otherwise)
+    if not local_export:
+        user_export_path = None
+    print(f"local_export after fix: {local_export} (type: {type(local_export)})", flush=True)
+    print(f"user_export_path after fix: {user_export_path}", flush=True)
+
     try:
         proj = VFProjects.get_project(project_name)
         if not proj:
             raise HTTPException(status_code=404, detail="Project not found")
         print(f"Project loaded: {proj.name}", flush=True)
-        
+
         is_video_project = proj.get_setup_type().startswith('Video ')
         print(f"Is video project: {is_video_project}", flush=True)
-        
+
         # For image projects: handle selected_images
         selected_images = None
         if not is_video_project:
             selected_images = images_list if images_list else None
             print(f"Incoming images: {images_list} -> selected_images: {selected_images}", flush=True)
-        
+
         # Video handling only for video projects
         if is_video_project:
             # Fetch all videos for mapping/fallback
@@ -890,7 +894,7 @@ async def export_annotations(
             print(f"All videos from project: {all_videos}", flush=True)
             print(f"Internal IDs: {internal_ids}", flush=True)
             print(f"Internal paths: {internal_paths}", flush=True)
-            
+
             if not videos:
                 videos = internal_paths
                 print(f"Fetched all videos (paths): {len(videos)}", flush=True)
@@ -899,7 +903,7 @@ async def export_annotations(
                 # Map incoming videos (IDs or paths) to internal paths
                 mapped_videos = []
                 for vid in videos:
-                    if not vid: 
+                    if not vid:
                         continue
                     try:
                         vid_int = int(vid)  # Handle string '1' -> int 1
@@ -920,24 +924,24 @@ async def export_annotations(
                             mapped_videos.append(vid)
                         else:
                             print(f"Warning: Invalid non-numeric '{vid}'", flush=True)
-                
+
                 videos = mapped_videos
                 print(f"Final videos for exporter: {videos}", flush=True)
-            
+
             if not videos:
                 raise ValueError("No valid videos found or matched in project")
-        
+
         # For image projects: treat empty selected_images as all annotated
         if not is_video_project and selected_images is not None and not selected_images:
             selected_images = None
-        
-        # Determine exporter path based on mode
+
+        # FIXED: Determine exporter path based on mode (ignore user path if not local)
         exporter_path = user_export_path if local_export else TMP_FOLDER
         print(f"exporter_path: {exporter_path}", flush=True)
-        
+
         exporter = VFExporter(
             project=proj,
-            path=exporter_path, 
+            path=exporter_path,
             format=format,
             selected_images=selected_images,
             split_choices=split_choices,
@@ -947,11 +951,13 @@ async def export_annotations(
             semantic=semantic
         )
         print(f"VFExporter created with path: {exporter_path}", flush=True)
-        
-        zip_path = exporter.export()
-        print(f"Export completed: {zip_path}", flush=True)
-        
+
+        filename = f'{proj.name}_{format}{"_video" if is_video_project else ""}.zip'
+
         if local_export:
+            # Write to disk and return JSON
+            zip_path = exporter.export()
+            print(f"Export completed: {zip_path}", flush=True)
             print(f"Local export branch hit: Returning JSON with path {zip_path}", flush=True)
             # Validate path was used (fixed for trailing /)
             clean_user_path = user_export_path.rstrip('/') if user_export_path else ''
@@ -961,14 +967,40 @@ async def export_annotations(
                 raise ValueError(f"Export saved to unexpected path: {zip_path} (expected prefix: {clean_user_path})")
             return JSONResponse({"success": True, "saved_path": zip_path})
         else:
-            print("Non-local export: Returning FileResponse", flush=True)
-            filename = os.path.basename(zip_path)
-            return FileResponse(
+            # FIXED: Use TMP_FOLDER + unique name (no tempfile)
+            import time
+            timestamp = int(time.time())
+            unique_filename = f"{filename.rsplit('.', 1)[0]}_{timestamp}.zip"  # e.g., MyProject_COCO_SEG_VIDEO_1728000000.zip
+            zip_path = os.path.join(TMP_FOLDER, unique_filename)
+            os.makedirs(TMP_FOLDER, exist_ok=True)  # Ensure dir exists
+
+            export_buffer = exporter._generate_export()  # BytesIO
+            with open(zip_path, 'wb') as f:
+                f.write(export_buffer.getvalue())
+
+            # Verify temp file
+            file_size = os.path.getsize(zip_path)
+            if file_size == 0:
+                raise ValueError("Generated ZIP is empty—exporter failed")
+            print(f"ZIP saved to TMP_FOLDER: {zip_path} (size: {file_size} bytes)", flush=True)
+
+            # Serve with FileResponse (handles binary cleanly)
+            response = FileResponse(
                 path=zip_path,
                 media_type='application/zip',
-                filename=filename,
-                headers={"Content-Disposition": f"attachment; filename={filename}"}
+                filename=filename,  # Original name for download
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Length': str(file_size)
+                }
             )
+
+            # FIXED: Cleanup after response
+            background_tasks.add_task(os.unlink, zip_path)
+
+            print("Returning FileResponse from TMP_FOLDER", flush=True)
+            return response
+
     except ValueError as ve:
         tracker_app.log_error(ve, step='Export annotations')
         print(f"Export validation failed for {project_name}: {ve}", flush=True)
@@ -979,7 +1011,7 @@ async def export_annotations(
         print(f"Export failed for {project_name}: {e}", flush=True)
         logger.error(f"Export failed for {project_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-                        
+                                
 @router.post('/delete_preannotations/{project_name}')
 async def delete_preannotations(
     project_name: str,
