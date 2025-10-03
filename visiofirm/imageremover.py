@@ -20,11 +20,11 @@ Usage:
 import os
 import sqlite3
 import logging
-from typing import Optional, Union
+from typing import Optional
 from pathlib import Path
 
 from visiofirm.projects import Project
-from visiofirm.config import VALID_IMAGE_EXTENSIONS
+# from visiofirm.config import VALID_IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
