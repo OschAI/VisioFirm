@@ -27,7 +27,7 @@ from PIL import Image as PILImage
 import os
 import json
 import logging
-from typing import Optional, Union
+from typing import Optional
 from pathlib import Path
 
 from visiofirm.projects import Project
