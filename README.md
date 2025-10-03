@@ -10,6 +10,7 @@
 -------
 > [!NOTE]
 > VisioFirm v1.1.1 correct some bugs related to exporting video via browser download. 
+
 > [!IMPORTANT]
 > VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1 ✨
 > * **class adding**: you can now add classes to your project in case you forgot any or you have new images with new classes.
