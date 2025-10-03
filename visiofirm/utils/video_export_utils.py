@@ -303,7 +303,7 @@ def generate_mask_sequence_export(project, videos_data: List[Dict[str, Any]], se
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for vid in videos_data:
-            instance_counter = {}  # For instance: {class_name: current_id}
+            instance_counter = {}  
             
             for frame_info in vid['frames']:
                 frame_num = frame_info['frame_number']
@@ -390,15 +390,48 @@ def generate_mask_video_export(project, videos_data: List[Dict[str, Any]], setup
                 logger.warning(f"Video {vid['name']} has 0 frames")
                 cap.release()
                 continue
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(temp_mask_video, fourcc, fps, (vid['width'], vid['height']))
             
+            # NEW: Pre-compute all annotated masks for propagation
             frame_map = {f['frame_number']: f['image_id'] for f in vid['frames']}
+            annotated_frame_numbers = sorted(frame_map.keys())
+            all_frame_masks = {}  # frame_num -> mask np.array
+            instance_counter = {}  # Reset per video (if needed, but now binary)
             
-            cat_to_id = {c: i+1 for i, c in enumerate(categories)}
-            instance_counter = {}  # Reset per video
+            # First pass: Build masks for annotated frames only
+            with sqlite3.connect(project.db_path) as conn:
+                cursor = conn.cursor()
+                for frame_num in annotated_frame_numbers:
+                    image_id = frame_map[frame_num]
+                    mask = np.zeros((vid['height'], vid['width']), dtype=np.uint8)
+                    
+                    cursor.execute('SELECT class_name, segmentation FROM Annotations WHERE image_id = ?', (image_id,))
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        class_name, seg_json = row[0], row[1]
+                        if not seg_json:
+                            continue
+                        points = json.loads(seg_json)
+                        if len(points) < 6:
+                            continue
+                        pts = np.array(points).reshape(-1, 2).astype(np.int32)
+                        
+                        # FIXED: Always binary white (255) for any annotation—ignores semantic/instance
+                        fill_val = 255  # Pure white; no greys
+                        
+                        cv2.fillPoly(mask, [pts], fill_val)
+                    
+                    all_frame_masks[frame_num] = mask
+            
+            # Second pass: Write video with propagation
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')  # FIXED: Sharper codec for binary masks (AVI); fallback below
+            out = cv2.VideoWriter(temp_mask_video, fourcc, fps, (vid['width'], vid['height']))
+            if not out.isOpened():  # Fallback if XVID unsupported
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(temp_mask_video, fourcc, fps, (vid['width'], vid['height']))
             
             frame_num = 1
+            last_mask = None  # For forward propagation
             while frame_num <= total_frames:
                 ret, frame_bgr = cap.read()
                 if not ret:
@@ -419,42 +452,21 @@ def generate_mask_video_export(project, videos_data: List[Dict[str, Any]], setup
                     except Exception as e:
                         logger.error(f"Failed to extract frame {frame_num} for {vid['name']}: {e}")
                 
-                # Create mask for this frame
-                mask = np.zeros((vid['height'], vid['width']), dtype=np.uint8)
-                image_id = frame_map.get(frame_num)
-                if image_id:
-                    with sqlite3.connect(project.db_path) as conn:
-                        cursor = conn.cursor()
-                        cursor.execute('SELECT class_name, segmentation FROM Annotations WHERE image_id = ?', (image_id,))
-                        rows = cursor.fetchall()
-                        
-                        for row in rows:
-                            class_name, seg_json = row[0], row[1]
-                            if not seg_json:
-                                continue
-                            points = json.loads(seg_json)
-                            if len(points) < 6:
-                                continue
-                            pts = np.array(points).reshape(-1, 2).astype(np.int32)
-                            
-                            if semantic:
-                                fill_val = cat_to_id.get(class_name, 0)
-                            else:
-                                if class_name not in instance_counter:
-                                    instance_counter[class_name] = 1
-                                fill_val = instance_counter[class_name]
-                                instance_counter[class_name] += 1
-                            
-                            cv2.fillPoly(mask, [pts], fill_val)
-                
-                # If semantic and multi-class, colorize? For now, grayscale if binary, else as-is
-                if semantic and max(cat_to_id.values()) > 1:
-                    # Optional: create colored mask
-                    colored_mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-                    # Assign colors per class? Skip for simplicity, use grayscale
-                    pass
+                # FIXED: Propagate mask to this frame
+                current_mask = all_frame_masks.get(frame_num)
+                if current_mask is not None:
+                    # Annotated: use it
+                    last_mask = current_mask.copy()
                 else:
-                    colored_mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+                    # Unannotated: copy from nearest previous (forward prop)
+                    if last_mask is not None:
+                        current_mask = last_mask.copy()
+                    else:
+                        # No previous: black (or you could backward prop here if desired)
+                        current_mask = np.zeros((vid['height'], vid['width']), dtype=np.uint8)
+                
+                # Convert to 3-channel for video (white=255, black=0)
+                colored_mask = cv2.cvtColor(current_mask, cv2.COLOR_GRAY2BGR)
                 
                 out.write(colored_mask)
                 frame_num += 1
@@ -466,6 +478,7 @@ def generate_mask_video_export(project, videos_data: List[Dict[str, Any]], setup
                 with open(temp_mask_video, 'rb') as f:
                     zip_file.writestr(f"masks/{vid['name']}_mask_video.mp4", f.read())
                 os.unlink(temp_mask_video)
+                logger.info(f"Generated mask video for {vid['name']} with propagation")
 
         # Add videos to ZIP
         _add_videos_to_zip(zip_file, videos_data)
