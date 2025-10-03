@@ -9,7 +9,8 @@
 
 -------
 > [!IMPORTANT]
-> VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1.1.0 ✨
+> VisioFirm v1.1.1 correct some bugs related to exporting video via browser download. 
+> VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1 ✨
 > * **class adding**: you can now add classes to your project in case you forgot any or you have new images with new classes.
 > * **Video annotation bug**: The previous version had a bug in saving modified annotations within frames. Now the save button by default saved the state of all current frames annotation for the video.
 > * **Classification and Preannotation**: Predict and pre-suggest image classes using **OpenAI CLIP pretrained model**, enabling near-automatic labeling.
