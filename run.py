@@ -43,6 +43,8 @@ VisioFirm v{}
 
 VisioFirm running in {}
 Stay updated by visiting our GitHub Repository https://github.com/OschAI/VisioFirm
+
+If you face an error, please report the content of the json error tracker to https://github.com/OschAI/VisioFirm/issues
 """.format(visiofirm.__version__, url))
     
     tracker = VFSessionTracker()
