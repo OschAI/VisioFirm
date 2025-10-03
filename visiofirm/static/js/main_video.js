@@ -499,7 +499,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (exportStart) {
         exportStart.addEventListener('click', async () => {
-            // validation
+            // Validation
             if (!selectedFormat) {
                 showToast('Please select a format.', 'warning');
                 return;
@@ -509,8 +509,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
             const selectedVideos = Array.from(videosCheckboxes.querySelectorAll('input:checked'))
-                .map(cb => cb.value.trim())  // NEW: Trim whitespace
-                .filter(v => v);  // NEW: Filter empty/invalid paths
+                .map(cb => cb.value.trim())
+                .filter(v => v);
             if (selectedVideos.length === 0) {
                 showToast('Please select at least one video.', 'warning');
                 return;
@@ -519,7 +519,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const extractFrames = document.getElementById('extract-frames')?.checked || false;
             const semantic = document.getElementById('semantic-mask')?.checked || false;
             const localExport = document.getElementById('local-export')?.checked || false;
-            let exportPath = '/tmp';
+
+            // FIXED: Only set exportPath if localExport=true; omit otherwise
+            let exportPath;
             if (localExport) {
                 const pathInput = document.getElementById('export-path');
                 if (!pathInput || !pathInput.value.trim()) {
@@ -532,17 +534,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                     showToast('Path appears to be client-side; use a server-accessible directory (e.g., /home/user/exports).', 'warning');
                     return;
                 }
-                console.log(`sending local path ${exportPath} to backend`);
+                console.log(`Sending local path ${exportPath} to backend`);
             }
 
             const payload = {
                 format: selectedFormat,
-                videos: selectedVideos,  // Now filtered
+                videos: selectedVideos,
                 extract_frames: extractFrames,
                 semantic: semantic,
-                export_path: exportPath,
                 local_export: localExport
             };
+            // FIXED: Conditionally add export_path only for local export
+            if (localExport && exportPath) {
+                payload.export_path = exportPath;
+            }
             console.log('Export payload:', payload);
 
             try {
@@ -557,7 +562,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (!resp.ok) {
                     let errText = 'Export failed';
-                    // FIXED: Check if body already read (e.g., after failed json)
                     if (!resp.bodyUsed) {
                         try {
                             const j = await resp.json();
@@ -575,7 +579,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 // Success handling
                 if (localExport) {
-                    // FIXED: Force JSON for local (ignore content-type; assume backend sends JSON)
                     const data = await resp.json();
                     console.log('Local export data:', data);
                     if (data.success) {
@@ -587,6 +590,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // Non-local: download blob
                     const filename = getFilenameFromHeaders(resp.headers) || `${projectName}_${selectedFormat}.zip`;
                     const blob = await resp.blob();
+                    console.log('Downloaded blob size:', blob.size, 'bytes');
+                    if (blob.size === 0) {
+                        throw new Error('Empty ZIP – export failed');
+                    }
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
