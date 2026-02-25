@@ -965,7 +965,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const closeBtn = aiPreannotatorModal.querySelector('.close-btn');
     const modeButtons = document.querySelectorAll('.mode-btn');
     const modeInput = document.getElementById('mode');
+    const modelPathInput = document.getElementById('model-path-input');
+    const customModelSelect = document.getElementById('custom-model-select');
     let statusInterval;
+
+    if (customModelSelect && modelPathInput) {
+        customModelSelect.addEventListener('change', () => {
+            if (customModelSelect.value) {
+                modelPathInput.value = customModelSelect.value;
+            }
+        });
+    }
 
     async function checkPreannotationStatus() {
         const response = await fetch(`/annotation/check_preannotation_status?project_name=${config.projectName}`);
@@ -1066,9 +1076,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (mode === 'zero-shot') {
             const dinoModel = document.getElementById('dino-model').value;
             formData.append('dino_model', dinoModel);
+            formData.append('open_vocab_model', dinoModel);
         } else if (mode === 'custom-model') {
-            const modelPath = document.getElementById('model-path-input').value.trim();
-            formData.append('model_path', modelPath || 'yolov10x.pt');
+            const modelPath = modelPathInput ? modelPathInput.value.trim() : '';
+            const presetModel = customModelSelect ? customModelSelect.value.trim() : '';
+            formData.append('model_path', modelPath || presetModel || 'yolov10x.pt');
         }
 
         const processingUnit = document.getElementById('processing-unit').value;
