@@ -81,6 +81,10 @@ KNOWN_MODELS = {
     "sam2.1_b.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_b.pt",
     "sam2.1_l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_l.pt",
 
+    # RT-DETR
+    "rtdetr-l.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-l.pt",
+    "rtdetr-x.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-x.pt",
+
     #### ZEROSHOT
     # Grounding DINO
     "groundingdino_swint_ogc.pth": "https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth",
@@ -99,19 +103,46 @@ KNOWN_MODELS = {
 
 def get_or_download_model(model_name: str) -> str:
     """
-    Retrieve the local path for a model, downloading it if necessary.
+    Retrieve a local model path, downloading known preset models if necessary.
     
     Args:
-        model_name (str): The filename of the model (e.g., 'yolov10x.pt').
+        model_name (str): A preset filename (e.g., 'yolov10x.pt') or a local file path.
     
     Returns:
         str: The absolute path to the model file.
     
     Raises:
-        ValueError: If the model_name is unknown.
+        ValueError: If model_name is invalid, unknown, or points to a missing file.
     """
+    if not model_name:
+        raise ValueError("Model name/path is empty.")
+
+    model_name = str(model_name).strip().strip('"').strip("'")
+    model_candidate = Path(model_name).expanduser()
+
+    # 1) If user passed a valid local path (absolute or relative), use it as-is.
+    if model_candidate.is_file():
+        resolved = str(model_candidate.resolve())
+        logger.info(f"Using local model path: {resolved}")
+        return resolved
+
+    # 2) If it's an absolute path but file does not exist, fail clearly.
+    if model_candidate.is_absolute():
+        raise ValueError(f"Model file not found at absolute path: {model_candidate}")
+
+    # 3) Support direct filename present in weights cache even if not in KNOWN_MODELS.
+    cached_candidate = Path(WEIGHTS_FOLDER) / model_name
+    if cached_candidate.is_file():
+        resolved = str(cached_candidate.resolve())
+        logger.info(f"Using cached model file: {resolved}")
+        return resolved
+
+    # 4) Otherwise treat it as a preset model name and download if known.
     if model_name not in KNOWN_MODELS:
-        raise ValueError(f"Unknown model: {model_name}. Add it to KNOWN_MODELS in downloader.py if needed.")
+        raise ValueError(
+            f"Unknown model preset: {model_name}. "
+            "Use a valid local .pt path or add this preset to KNOWN_MODELS in downloader.py."
+        )
     
     path = Path(WEIGHTS_FOLDER) / model_name
     if path.exists():
