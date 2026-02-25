@@ -144,51 +144,70 @@ class ImageProcessor:
         for user_class in class_list:
             user_class_clean = user_class.replace("a ", "").replace("an ", "").replace("photo of ", "").replace("picture of ", "").strip()
             class_mapping[user_class_clean.lower()] = user_class_clean
-        if any(keyword in self.yolo_model_path.lower() for keyword in ['yolo5', 'yolov5', 'y5', 'v5']):
-            results = self.yolo_model(image)
-            boxes = []
-            scores = []
-            labels = []
-            kept_idx = []
-            for idx, box in enumerate(results.xyxy[0]):
-                x1, y1, x2, y2, conf, cls = box
-                if conf >= conf_threshold:
-                    icls = int(cls)
-                    if 0 <= icls < len(results.names):
-                        class_name = results.names[icls]
-                        if class_name.lower() in clean_class_set:
-                            user_class_name = class_mapping.get(class_name.lower(), class_name)
-                            boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
-                            scores.append(conf.item())
-                            labels.append(user_class_name)
-                            kept_idx.append(idx)
-                    else:
-                        continue
-            masks = None # TODO: Add masks support for YOLOv5 if needed
-        else:
-            results = self.yolo_model.predict(image, conf=conf_threshold, verbose=self.verbose, retina_masks=True)
-            boxes = []
-            scores = []
-            labels = []
-            kept_idx = []
-            for idx, box in enumerate(results[0].boxes):
+        results = self.yolo_model.predict(image, conf=conf_threshold, verbose=self.verbose, retina_masks=True)
+        boxes = []
+        scores = []
+        labels = []
+        kept_idx = []
+
+        # Newer Ultralytics API (YOLOv5/8/9/10/11/12): list[Results]
+        if isinstance(results, list) and len(results) > 0 and hasattr(results[0], "boxes"):
+            first = results[0]
+            names = first.names
+
+            def resolve_name(idx):
+                if isinstance(names, dict):
+                    return names.get(idx)
+                if isinstance(names, list) and 0 <= idx < len(names):
+                    return names[idx]
+                return None
+
+            for idx, box in enumerate(first.boxes):
                 x1, y1, x2, y2 = box.xyxy[0]
                 conf = box.conf[0]
                 cls = box.cls[0]
                 icls = int(cls)
-                if icls in results[0].names:
-                    class_name = results[0].names[icls]
-                    if class_name.lower() in clean_class_set:
-                        user_class_name = class_mapping.get(class_name.lower(), class_name)
-                        boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
-                        scores.append(conf.item())
-                        labels.append(user_class_name)
-                        kept_idx.append(idx)
-                else:
+                class_name = resolve_name(icls)
+                if not class_name:
                     continue
-            masks = results[0].masks.data.cpu().numpy().astype(np.float32) if results[0].masks is not None else None
+                if class_name.lower() in clean_class_set:
+                    user_class_name = class_mapping.get(class_name.lower(), class_name)
+                    boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
+                    scores.append(conf.item())
+                    labels.append(user_class_name)
+                    kept_idx.append(idx)
+
+            masks = first.masks.data.cpu().numpy().astype(np.float32) if first.masks is not None else None
             if masks is not None and len(kept_idx) > 0:
                 masks = masks[kept_idx]
+        # Legacy YOLOv5 output compatibility: results.xyxy[0]
+        elif hasattr(results, "xyxy"):
+            names = getattr(results, "names", {})
+
+            def resolve_name_legacy(idx):
+                if isinstance(names, dict):
+                    return names.get(idx)
+                if isinstance(names, list) and 0 <= idx < len(names):
+                    return names[idx]
+                return None
+
+            for idx, box in enumerate(results.xyxy[0]):
+                x1, y1, x2, y2, conf, cls = box
+                if conf < conf_threshold:
+                    continue
+                icls = int(cls)
+                class_name = resolve_name_legacy(icls)
+                if not class_name:
+                    continue
+                if class_name.lower() in clean_class_set:
+                    user_class_name = class_mapping.get(class_name.lower(), class_name)
+                    boxes.append([x1.item(), y1.item(), x2.item(), y2.item()])
+                    scores.append(conf.item())
+                    labels.append(user_class_name)
+                    kept_idx.append(idx)
+            masks = None
+        else:
+            raise ValueError("Unsupported YOLO output format returned by Ultralytics.")
         return {
             "boxes": np.array(boxes, dtype=np.float32),
             "scores": np.array(scores, dtype=np.float32),
@@ -621,5 +640,17 @@ class PreAnnotator:
             torch.cuda.empty_cache()
         gc.collect()
         logger.info("Memory cleanup completed.")
+
+    def close(self):
+        """Close open resources (notably sqlite connection) in an idempotent way."""
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            finally:
+                self.conn = None
+
     def __del__(self):
-        self.conn.close()
+        self.close()
