@@ -9,7 +9,10 @@
 
 -------
 > [!NOTE]
-> VisioFirm v1.1.1 correct some bugs related to exporting video via browser download. 
+> VisioFirm v1.1.2 can now support RT-DETR from `ultralytics`.
+> We corrected some related to YOLOv5 pre-annotation as well as Windows OS related custom path for those using custom models.
+> For Unsual Object beyong COCO dataset, you can now select YOLO World or GroundingDino to pre-label images. 
+> We added tips for the right selection between zero shot and ultralytics models as well as how to load your own model.
 
 > [!IMPORTANT]
 > VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1 ✨
