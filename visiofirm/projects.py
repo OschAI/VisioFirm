@@ -40,6 +40,9 @@ import tempfile
 import zipfile
 import tarfile
 import rarfile 
+import time
+import gc
+import stat
 from werkzeug.utils import secure_filename
 import sqlite3
 
@@ -434,8 +437,28 @@ class VFProjects:
         """
         project_path = os.path.join(projects_folder, secure_filename(name))
         if os.path.exists(project_path):
-            shutil.rmtree(project_path)
-            logger.info(f"Deleted project {name}")
-            return True
+            def _on_rm_error(func, path, exc_info):
+                # On Windows, read-only flags can block deletion.
+                try:
+                    os.chmod(path, stat.S_IWRITE)
+                    func(path)
+                except Exception:
+                    # Let outer retry logic handle lingering locks (e.g. sqlite handle still open).
+                    pass
+
+            last_err = None
+            for _ in range(20):
+                try:
+                    shutil.rmtree(project_path, onerror=_on_rm_error)
+                    if os.path.exists(project_path):
+                        raise PermissionError(f"Project folder still exists after deletion attempt: {project_path}")
+                    logger.info(f"Deleted project {name}")
+                    return True
+                except PermissionError as e:
+                    last_err = e
+                    gc.collect()
+                    time.sleep(0.25)
+            if last_err:
+                raise last_err
         logger.warning(f"Project {name} not found")
         return False
