@@ -64,6 +64,26 @@
             font-weight: 600;
         }
 
+        .repo-link-center {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .repo-link-center a {
+            color: var(--text-color);
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: var(--transition);
+        }
+
+        .repo-link-center a:hover {
+            color: var(--primary-color);
+        }
+
         .nav-links {
             margin-left: auto;
         }
@@ -240,6 +260,12 @@
                 <img src="/static/img/VisioFirm_logo.png" alt="VisioFirm Logo">
                 <a href="/">VisioFirm</a>
             </h1>
+            <div class="repo-link-center">
+                <a href="https://github.com/OschAI/VisioFirm" target="_blank" rel="noreferrer">
+                    <i style="font-size:24px" class="fab fa-github"></i>
+                    OschAI/VisioFirm
+                </a>
+            </div>
             <div class="nav-links">
                 <a href="/">Dashboard</a>
             </div>
