@@ -94,23 +94,25 @@ async def ai_preannotator_config(
 
         # Create instance
         if mode == 'zero-shot':
+            selected_open_vocab_model = (form.get('open_vocab_model') or form.get('dino_model') or 'tiny').strip() or 'tiny'
             preannotator = VFPreAnnotator(
                 project=proj,
                 mode=mode,
                 device=device,
                 box_threshold=box_threshold,
-                dino_model=form.get('dino_model', 'tiny')
+                dino_model=selected_open_vocab_model
             )
-            model_details = form.get('dino_model', 'tiny')
+            model_details = selected_open_vocab_model
         elif mode == 'custom-model':
+            selected_model_path = (form.get('model_path') or '').strip() or 'yolov10x.pt'
             preannotator = VFPreAnnotator(
                 project=proj,
                 mode=mode,
                 device=device,
                 box_threshold=box_threshold,
-                model_path=form.get('model_path', 'yolov10x.pt')
+                model_path=selected_model_path
             )
-            model_details = form.get('model_path', 'yolov10x.pt')
+            model_details = selected_model_path
         elif mode == 'clip':
             preannotator = VFPreAnnotator(
                 project=proj,
