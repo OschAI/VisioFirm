@@ -64,6 +64,7 @@ class VFPreAnnotator:
 
     def _run_core(self):
         """Internal runner for PreAnnotator."""
+        proc = None
         try:
             self.status = 'running'
             self.progress = 0
@@ -74,14 +75,25 @@ class VFPreAnnotator:
                 self.progress = progress
 
             if self.mode == 'zero-shot':
-                model_type = f"grounding_dino_{self.dino_model}"
-                proc = CorePreAnnotator(
-                    model_type=model_type,
-                    config_db_path=self.config_db_path,
-                    device=self.device,
-                    box_threshold=self.box_threshold,
-                    progress_callback=progress_cb
-                )
+                if self.dino_model in ['tiny', 'base']:
+                    model_type = f"grounding_dino_{self.dino_model}"
+                    proc = CorePreAnnotator(
+                        model_type=model_type,
+                        config_db_path=self.config_db_path,
+                        device=self.device,
+                        box_threshold=self.box_threshold,
+                        progress_callback=progress_cb
+                    )
+                else:
+                    # Open-vocabulary YOLO-World selection runs through Ultralytics.
+                    proc = CorePreAnnotator(
+                        model_type="yolo",
+                        yolo_model_path=self.dino_model,
+                        config_db_path=self.config_db_path,
+                        device=self.device,
+                        box_threshold=self.box_threshold,
+                        progress_callback=progress_cb
+                    )
             elif self.mode == 'custom-model':
                 proc = CorePreAnnotator(
                     model_type="yolo",
@@ -110,6 +122,13 @@ class VFPreAnnotator:
             logger.error(f"Pre-annotation failed for {self.project.name}: {e}")
             self.status = 'failed'
             self.progress = 0
+        finally:
+            # Explicitly close DB handle to avoid Windows file-lock issues on project deletion.
+            if proc is not None and hasattr(proc, "close"):
+                try:
+                    proc.close()
+                except Exception as close_err:
+                    logger.warning(f"Failed to close pre-annotator DB connection cleanly: {close_err}")
 
 
     def run(self):
