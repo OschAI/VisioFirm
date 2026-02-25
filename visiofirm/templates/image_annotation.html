@@ -363,6 +363,18 @@
         margin-bottom: 10px;
     }
 
+    #ai-preannotator-modal .mode-option {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+
+    #ai-preannotator-modal .mode-option .mode-btn {
+        width: 100%;
+    }
+
     #ai-preannotator-modal .mode-btn {
         flex: 1;
         padding: 12px 20px;
@@ -486,6 +498,109 @@
         display: block;
         padding: 8px 10px;
         font-style: italic;
+    }
+
+    #ai-preannotator-modal .label-with-info {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    #ai-preannotator-modal .info-tooltip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #27ae60;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 700;
+        box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.35);
+        cursor: help;
+        user-select: none;
+        animation: infoPulse 2s ease-in-out infinite;
+    }
+
+    @keyframes infoPulse {
+        0% {
+            background: #2ecc71;
+            box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.25);
+        }
+        50% {
+            background: #27ae60;
+            box-shadow: 0 0 0 6px rgba(39, 174, 96, 0.08);
+        }
+        100% {
+            background: #2ecc71;
+            box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.25);
+        }
+    }
+
+    #ai-preannotator-modal .info-tooltip::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: 24px;
+        top: 50%;
+        transform: translateY(-50%);
+        min-width: 320px;
+        max-width: 420px;
+        background: #1f2937;
+        color: #ffffff;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.15s ease;
+        z-index: 20;
+        pointer-events: none;
+        white-space: normal;
+    }
+
+    #ai-preannotator-modal .info-tooltip:hover::after {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    #ai-preannotator-modal .mode-info-item {
+        display: flex;
+        justify-content: center;
+    }
+
+    #ai-preannotator-modal .info-tooltip-danger {
+        background: #e74c3c;
+        box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.35);
+        animation: infoPulseDanger 2s ease-in-out infinite;
+    }
+
+    @keyframes infoPulseDanger {
+        0% {
+            background: #ff6b5d;
+            box-shadow: 0 0 0 0 rgba(255, 107, 93, 0.25);
+        }
+        50% {
+            background: #e74c3c;
+            box-shadow: 0 0 0 6px rgba(231, 76, 60, 0.10);
+        }
+        100% {
+            background: #ff6b5d;
+            box-shadow: 0 0 0 0 rgba(255, 107, 93, 0.25);
+        }
+    }
+
+    #ai-preannotator-modal .info-tooltip-danger::after {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        min-width: 280px;
+        width: min(25%, 760px);
+        max-width: min(30%, 760px);
     }
 </style>
     <!-- Grid View -->
@@ -954,25 +1069,56 @@
                         {% if setup_type == 'Classification' %}
                         <button type="button" class="mode-btn active" data-mode="clip">CLIP Zero-shot Classification</button>
                         {% else %}
-                        <button type="button" class="mode-btn active" data-mode="zero-shot">Zero-shot Detection</button>
-                        <button type="button" class="mode-btn" data-mode="custom-model">Ultralytics Model</button>
+                        <div class="mode-option">
+                            <button type="button" class="mode-btn active" data-mode="zero-shot">Zero-shot Detection</button>
+                            <div class="mode-info-item">
+                                <span class="info-tooltip info-tooltip-danger" data-tooltip="Zero-shot Detection uses open-vocabulary models to detect and localize objects beyond fixed COCO classes, from an almost unlimited user-defined vocabulary, including classes never seen during training. Preferred for specific prompts such as 'Red car', 'tiny dog', 'Vintage glass Coca-Cola bottle', or 'Person wearing a virtual reality headset'.">
+                                    i
+                                </span>
+                            </div>
+                        </div>
+                        <div class="mode-option">
+                            <button type="button" class="mode-btn" data-mode="custom-model">Ultralytics Model</button>
+                            <div class="mode-info-item">
+                                <span class="info-tooltip info-tooltip-danger" data-tooltip="Ultralytics Model mode is generally trained on COCO-like datasets with fixed classes such as dog, car, bottle, apple, person, orange, umbrella, skateboard, and similar common objects.">
+                                    i
+                                </span>
+                            </div>
+                        </div>
                         {% endif %}
                     </div>
                     <input type="hidden" id="mode" name="mode" value="{% if setup_type == 'Classification' %}clip{% else %}zero-shot{% endif %}">
                 </div>
                 {% if setup_type != 'Classification' %}
                 <div id="zero-shot-options" class="form-group">
-                    <label>Grounding Dino Model</label>
+                    <label>Select Open Vocabulary Model</label>
                     <select id="dino-model">
                         <optgroup label="Grounding Dino">
                             <option value="tiny">Tiny</option>
                             <option value="base">Base</option>
                         </optgroup>
+                        <optgroup label="YOLO-World">
+                            <option value="yolov8s-world.pt">YOLOv8 Small World</option>
+                            <option value="yolov8m-world.pt">YOLOv8 Medium World</option>
+                            <option value="yolov8l-world.pt">YOLOv8 Large World</option>
+                            <option value="yolov8x-world.pt">YOLOv8 Extra Large World</option>
+                        </optgroup>
+                        <optgroup label="YOLO-World v2">
+                            <option value="yolov8s-worldv2.pt">YOLOv8 Small World v2</option>
+                            <option value="yolov8m-worldv2.pt">YOLOv8 Medium World v2</option>
+                            <option value="yolov8l-worldv2.pt">YOLOv8 Large World v2</option>
+                            <option value="yolov8x-worldv2.pt">YOLOv8 Extra Large World v2</option>
+                        </optgroup>
                     </select>
                 </div>
                 {% endif %}
                 <div id="custom-model-path" class="form-group" style="display: none;">
-                    <label>Model Path</label>
+                    <label class="label-with-info">
+                        Model Path
+                        <span class="info-tooltip" data-tooltip="Use either: (1) an absolute local path to your custom .pt model, or (2) Select Preset Model from the dropdown.">
+                            i
+                        </span>
+                    </label>
                     <div id="custom-model-input-container">
                         <input type="text" id="model-path-input" name="model_path" placeholder="Enter absolute path to .pt model">
                         <div id="custom-model-dropdown">
@@ -1026,70 +1172,9 @@
                                     <option value="yolo12l.pt">YOLOv12 Large</option>
                                     <option value="yolo12x.pt">YOLOv12 Extra Large</option>
                                 </optgroup>
-                                <optgroup label="YOLO Segmentation">
-                                    <option value="yolo8n-seg.pt">YOLOv8 Nano Seg</option>
-                                    <option value="yolo8s-seg.pt">YOLOv8 Small Seg</option>
-                                    <option value="yolo8m-seg.pt">YOLOv8 Medium Seg</option>
-                                    <option value="yolo8l-seg.pt">YOLOv8 Large Seg</option>
-                                    <option value="yolo8x-seg.pt">YOLOv8 Extra Large Seg</option>
-                                    <option value="yolo11n-seg.pt">YOLOv11 Nano Seg</option>
-                                    <option value="yolo11s-seg.pt">YOLOv11 Small Seg</option>
-                                    <option value="yolo11m-seg.pt">YOLOv11 Medium Seg</option>
-                                    <option value="yolo11l-seg.pt">YOLOv11 Large Seg</option>
-                                    <option value="yolo11x-seg.pt">YOLOv11 Extra Large Seg</option>
-                                    <option value="yolo12n-seg.pt">YOLOv12 Nano Seg</option>
-                                    <option value="yolo12s-seg.pt">YOLOv12 Small Seg</option>
-                                    <option value="yolo12m-seg.pt">YOLOv12 Medium Seg</option>
-                                    <option value="yolo12l-seg.pt">YOLOv12 Large Seg</option>
-                                    <option value="yolo12x-seg.pt">YOLOv12 Extra Large Seg</option>
-                                </optgroup>
-                                                                <optgroup label="YOLOv5">
-                                    <option value="yolov5nu.pt">YOLOv5 Nano</option>
-                                    <option value="yolov5su.pt">YOLOv5 Small</option>
-                                    <option value="yolov5mu.pt">YOLOv5 Medium</option>
-                                    <option value="yolov5lu.pt">YOLOv5 Large</option>
-                                    <option value="yolov5xu.pt">YOLOv5 Extra Large</option>
-                                    <option value="yolov5n6u.pt">YOLOv5 Nano v6</option>
-                                    <option value="yolov5s6u.pt">YOLOv5 Small v6</option>
-                                    <option value="yolov5m6u.pt">YOLOv5 Medium v6</option>
-                                    <option value="yolov5l6u.pt">YOLOv5 Large v6</option>
-                                    <option value="yolov5x6u.pt">YOLOv5 Extra Large v6</option>
-                                </optgroup>
-                                <optgroup label="YOLOv8">
-                                    <option value="yolov8n.pt">YOLOv8 Nano</option>
-                                    <option value="yolov8s.pt">YOLOv8 Small</option>
-                                    <option value="yolov8m.pt">YOLOv8 Medium</option>
-                                    <option value="yolov8l.pt">YOLOv8 Large</option>
-                                    <option value="yolov8x.pt">YOLOv8 Extra Large</option>
-                                </optgroup>
-                                <optgroup label="YOLOv9">
-                                    <option value="yolov9t.pt">YOLOv9 Tiny</option>
-                                    <option value="yolov9s.pt">YOLOv9 Small</option>
-                                    <option value="yolov9m.pt">YOLOv9 Medium</option>
-                                    <option value="yolov9c.pt">YOLOv9 Compact</option>
-                                    <option value="yolov9e.pt">YOLOv9 Extended</option>
-                                </optgroup>
-                                <optgroup label="YOLOv10">
-                                    <option value="yolov10n.pt">YOLOv10 Nano</option>
-                                    <option value="yolov10s.pt">YOLOv10 Small</option>
-                                    <option value="yolov10m.pt">YOLOv10 Medium</option>
-                                    <option value="yolov10b.pt">YOLOv10 Base</option>
-                                    <option value="yolov10l.pt">YOLOv10 Large</option>
-                                    <option value="yolov10x.pt">YOLOv10 Extra Large</option>
-                                </optgroup>
-                                <optgroup label="YOLOv11">
-                                    <option value="yolo11n.pt">YOLOv11 Nano</option>
-                                    <option value="yolo11s.pt">YOLOv11 Small</option>
-                                    <option value="yolo11m.pt">YOLOv11 Medium</option>
-                                    <option value="yolo11l.pt">YOLOv11 Large</option>
-                                    <option value="yolo11x.pt">YOLOv11 Extra Large</option>
-                                </optgroup>
-                                <optgroup label="YOLOv12">
-                                    <option value="yolo12n.pt">YOLOv12 Nano</option>
-                                    <option value="yolo12s.pt">YOLOv12 Small</option>
-                                    <option value="yolo12m.pt">YOLOv12 Medium</option>
-                                    <option value="yolo12l.pt">YOLOv12 Large</option>
-                                    <option value="yolo12x.pt">YOLOv12 Extra Large</option>
+                                <optgroup label="RT-DETR">
+                                    <option value="rtdetr-l.pt">RT-DETR Large</option>
+                                    <option value="rtdetr-x.pt">RT-DETR Extra Large</option>
                                 </optgroup>
                                 <optgroup label="YOLO Segmentation">
                                     <option value="yolo8n-seg.pt">YOLOv8 Nano Seg</option>
@@ -1107,18 +1192,6 @@
                                     <option value="yolo12m-seg.pt">YOLOv12 Medium Seg</option>
                                     <option value="yolo12l-seg.pt">YOLOv12 Large Seg</option>
                                     <option value="yolo12x-seg.pt">YOLOv12 Extra Large Seg</option>
-                                </optgroup>
-                                <optgroup label="YOLO-World">
-                                    <option value="yolov8s-world.pt">YOLOv8 Small World</option>
-                                    <option value="yolov8m-world.pt">YOLOv8 Medium World</option>
-                                    <option value="yolov8l-world.pt">YOLOv8 Large World</option>
-                                    <option value="yolov8x-world.pt">YOLOv8 Extra Large World</option>
-                                </optgroup>
-                                <optgroup label="YOLO-World v2">
-                                    <option value="yolov8s-worldv2.pt">YOLOv8 Small World v2</option>
-                                    <option value="yolov8m-worldv2.pt">YOLOv8 Medium World v2</option>
-                                    <option value="yolov8l-worldv2.pt">YOLOv8 Large World v2</option>
-                                    <option value="yolov8x-worldv2.pt">YOLOv8 Extra Large World v2</option>
                                 </optgroup>
                             </select>
                         </div>
