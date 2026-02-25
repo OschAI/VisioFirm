@@ -9,7 +9,7 @@
 
 -------
 > [!NOTE]
-> VisioFirm v1.1.2 can now support RT-DETR from `ultralytics`.
+> VisioFirm v1.2 can now support RT-DETR from `ultralytics`.
 > We corrected some related to YOLOv5 pre-annotation as well as Windows OS related custom path for those using custom models.
 > For Unsual Object beyong COCO dataset, you can now select YOLO World or GroundingDino to pre-label images. 
 > We added tips for the right selection between zero shot and ultralytics models as well as how to load your own model.
