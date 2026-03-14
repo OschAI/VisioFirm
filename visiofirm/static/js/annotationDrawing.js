@@ -12,7 +12,8 @@ import {
     gridSize,
     canvas,
     currentAnnotation,
-    isDrawing
+    isDrawing,
+    isAnnotationLabelHidden
 } from './globals.js';
 import { toCanvasCoords } from './annotationCore.js';
 import { getResolvedAnnotationStyle } from './annotationStyles.js';
@@ -102,7 +103,11 @@ export function drawImage() {
 
 function drawAnnotations() {
     annotations
-        .filter(anno => anno.type !== 'classification' && (!anno.isPreannotation || (anno.confidence >= confidenceThreshold)))
+        .filter(anno => (
+            anno.type !== 'classification' &&
+            (!anno.isPreannotation || (anno.confidence >= confidenceThreshold)) &&
+            !isAnnotationLabelHidden(anno.label)
+        ))
         .forEach(anno => {
             if (anno.type === 'rect' || anno.type === 'obbox') {
                 drawRectAnnotation(anno);
