@@ -653,6 +653,9 @@
             <button id="viewport-btn-grid" class="layout-btn" title="Switch to Viewport Mode">
                 <i class="fas fa-desktop"></i> Annotate
             </button>
+            <button id="annotation-style-settings-btn" class="layout-btn" title="Annotation Style Settings">
+                <i class="fas fa-sliders-h"></i> Settings
+            </button>
         </div>
         <div class="grid-content">
             <div id="grid-thumbnails" class="grid-thumbnails">
@@ -1229,6 +1232,74 @@
             </form>
         </div>
     </div>
+    <div class="modal" id="annotation-style-modal">
+        <div class="modal-content annotation-style-modal-content">
+            <button id="annotation-style-close-btn" class="close-btn">×</button>
+            <h2>Annotation Style Settings</h2>
+            <div class="style-tab-header">
+                <button class="style-tab-btn active" data-style-tab="visual">Visual</button>
+                <button class="style-tab-btn" data-style-tab="json">JSON</button>
+            </div>
+            <div id="annotation-style-error" class="style-config-error" style="display: none;"></div>
+            <div class="style-tab-panel active" data-style-panel="visual">
+                <div class="style-defaults-grid">
+                    <label>Render Mode
+                        <select id="style-default-render-mode">
+                            <option value="outline">Outline only</option>
+                            <option value="fill">Fill only</option>
+                            <option value="outline_fill">Outline + fill</option>
+                        </select>
+                    </label>
+                    <label>Stroke Width
+                        <input id="style-default-stroke-width" type="number" min="1" max="24" step="1">
+                    </label>
+                    <label>Fill Opacity
+                        <input id="style-default-fill-opacity" type="number" min="0" max="1" step="0.01">
+                    </label>
+                    <label>Selected Stroke Width
+                        <input id="style-selected-stroke-width" type="number" min="1" max="24" step="1">
+                    </label>
+                    <label>Selected Color
+                        <span class="style-color-field style-color-field-stroke">
+                            <span class="style-color-preview" aria-hidden="true"></span>
+                            <input id="style-selected-stroke-color" type="color">
+                        </span>
+                    </label>
+                    <label>Preannotation Fill Opacity
+                        <input id="style-preannotation-fill-opacity" type="number" min="0" max="1" step="0.01">
+                    </label>
+                </div>
+                <div class="style-classes-section">
+                    <div class="style-classes-header">
+                        <h3>Per-Class Overrides</h3>
+                        <button id="annotation-style-reset-btn" type="button" class="layout-btn">Reset</button>
+                    </div>
+                    <div class="style-class-table-wrapper">
+                        <table class="style-class-table">
+                            <thead>
+                                <tr>
+                                    <th>Class</th>
+                                    <th>Stroke</th>
+                                    <th>Fill</th>
+                                    <th>Width</th>
+                                    <th>Opacity</th>
+                                    <th>Mode</th>
+                                    <th>Preview</th>
+                                </tr>
+                            </thead>
+                            <tbody id="annotation-style-class-rows"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="style-tab-panel" data-style-panel="json">
+                <textarea id="annotation-style-json-editor" spellcheck="false"></textarea>
+            </div>
+            <div class="annotation-style-actions">
+                <button id="annotation-style-save-btn" type="button" class="create-btn">Save</button>
+            </div>
+        </div>
+    </div>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/setup.css">
@@ -1236,7 +1307,8 @@
         {
             "setupType": "{{ setup_type }}",
             "projectName": "{{ project_name }}",
-            "classes": {{ classes|tojson }}
+            "classes": {{ classes|tojson }},
+            "annotationStyleConfig": {{ annotation_style_config|default(None)|tojson }}
         }
     </script>
     <script>
