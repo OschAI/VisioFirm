@@ -182,6 +182,14 @@
     z-index: 10;
 }
 
+.image-info-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 260px 0 16px;
+}
+
 #labeling-canvas {
     width: 100%;
     height: 100%;
@@ -472,6 +480,7 @@
     background: rgba(67, 97, 238, 0.1);
     border-color: var(--primary-color);
 }
+
 
 .control-panel {
     height: 100px;
