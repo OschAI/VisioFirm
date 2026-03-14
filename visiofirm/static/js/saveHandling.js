@@ -1,5 +1,6 @@
 import { annotationCache, currentImageKey, annotations, confidenceThreshold } from './globals.js';
 import { saveCacheToStorage } from './storageHandling.js';
+import { updateAnnotationSummary } from './imageHandling.js';
 
 export function initSaveHandling(updateAnnotationStatus) {
     document.getElementById('approve-btn').addEventListener('click', async function(e) {
@@ -28,6 +29,7 @@ export function initSaveHandling(updateAnnotationStatus) {
         // Update the annotation cache
         annotationCache[currentImageKey] = [...filteredAnnotations];
         const isAnnotated = true; // Always true for manual saves
+        updateAnnotationSummary();
 
         // Update both grid and list views
         updateAnnotationStatus(currentImageKey, isAnnotated);

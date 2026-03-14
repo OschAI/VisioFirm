@@ -10,7 +10,10 @@ import {
     selectedLabel,
     setSelectedLabel,
     annotations,
-    setAnnotations
+    setAnnotations,
+    toggleHiddenAnnotationLabel,
+    isAnnotationLabelHidden,
+    setSelectedAnnotation
 } from './globals.js';
 import { initializeGridView, switchToAnnotationView, switchToGridView, sortImages, toggleView } from './viewManagement.js';
 import { initToolControls } from './toolControls.js';
@@ -18,7 +21,7 @@ import { initAnnotationInteraction } from './annotationInteraction.js';
 import { initKeyboardShortcuts } from './keyboardShortcuts.js';
 import { initShortcutsSidebar, updateShortcutsNotice } from './shortcutsHelp.js';
 import { initSaveHandling } from './saveHandling.js';
-import { selectImage, resizeCanvas } from './imageHandling.js';
+import { selectImage, resizeCanvas, updateAnnotationSummary } from './imageHandling.js';
 import { drawImage } from './annotationDrawing.js';
 import { pushToUndoStack } from './annotationCore.js';
 import { setConfidenceThreshold } from '/static/js/globals.js';
@@ -127,7 +130,13 @@ function generateClassTags() {
             tag.className = 'class-tag';
             tag.dataset.class = cls;
             tag.style.backgroundColor = color;
-            tag.textContent = cls;
+            if (isAnnotationLabelHidden(cls)) {
+                tag.classList.add('hidden-class-tag');
+            }
+
+            const label = document.createElement('span');
+            label.className = 'class-tag-label';
+            label.textContent = cls;
 
             tag.addEventListener('click', () => {
                 if (selectedAnnotation) {
@@ -143,6 +152,25 @@ function generateClassTags() {
                 }
             });
 
+            const visibilityBtn = document.createElement('button');
+            visibilityBtn.type = 'button';
+            visibilityBtn.className = 'class-visibility-btn';
+            visibilityBtn.title = isAnnotationLabelHidden(cls) ? `Show ${cls}` : `Hide ${cls}`;
+            visibilityBtn.innerHTML = `<i class="fas ${isAnnotationLabelHidden(cls) ? 'fa-eye-slash' : 'fa-eye'}"></i>`;
+            visibilityBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const isHidden = toggleHiddenAnnotationLabel(cls);
+                if (isHidden && selectedAnnotation?.label === cls) {
+                    setSelectedAnnotation(null);
+                    updateTagHighlights();
+                }
+                generateClassTags();
+                updateAnnotationSummary();
+                drawImage();
+            });
+
+            tag.appendChild(label);
+            tag.appendChild(visibilityBtn);
             container.appendChild(tag);
         });
 
@@ -162,7 +190,7 @@ function generateClassTags() {
         searchInput.addEventListener('input', (e) => {
             const search = e.target.value.toLowerCase();
             document.querySelectorAll('#class-tags-container .class-tag').forEach(tag => {
-                const text = tag.textContent.toLowerCase();
+                const text = tag.querySelector('.class-tag-label')?.textContent.toLowerCase() || '';
                 tag.style.display = text.includes(search) ? 'flex' : 'none';
             });
         });
@@ -441,6 +469,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     confidenceValueSpan.textContent = '1.01';
                     hidePredictionBtn.textContent = 'Show Pred.';
                 }
+                updateAnnotationSummary();
                 drawImage();
             });
         }
@@ -451,6 +480,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 lastConfidenceValue = value;
                 setConfidenceThreshold(value);
                 confidenceValue.textContent = value.toFixed(2);
+                updateAnnotationSummary();
                 drawImage();
             });
         }

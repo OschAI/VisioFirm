@@ -236,11 +236,11 @@
     background-color: #ddd;
 }
 
-.class-tag {
-    position: relative;
-    padding: 0px 5px 2px 2px;
-    margin: 4px 0;
-    border-radius: 4px;
+    .class-tag {
+        position: relative;
+        padding: 0px 5px 2px 2px;
+        margin: 4px 0;
+        border-radius: 4px;
     color: black;
     font-size: 0.875rem;
     font-weight: 500;
@@ -250,8 +250,53 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    max-height: 30px;
-}
+        max-height: 30px;
+    }
+
+    .class-tag-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .class-visibility-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        margin-left: 6px;
+        border: none;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.42);
+        color: #111827;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    .class-visibility-btn:hover {
+        background: rgba(255, 255, 255, 0.7);
+    }
+
+    .hidden-class-tag {
+        opacity: 0.45;
+        outline: 2px dashed rgba(17, 24, 39, 0.55);
+    }
+
+    .annotation-summary {
+        position: absolute;
+        top: 50%;
+        right: 16px;
+        transform: translateY(-50%);
+        min-width: 220px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.16);
+        color: #ffffff;
+        font-size: 0.85rem;
+        line-height: 1.3;
+        text-align: right;
+    }
 
 .class-tag.selected {
     border: 2px solid black;
@@ -791,7 +836,10 @@
         <div class="labeling-area">
             <div class="image-workspace">
                 <div class="image-container">
-                    <div class="image-info"></div>
+                    <div class="image-info">
+                        <span class="image-info-text"></span>
+                        <span id="annotation-summary" class="annotation-summary">AI: no preannotations</span>
+                    </div>
                     <canvas id="labeling-canvas"></canvas>
                     <div class="shortcuts-sidebar">
                         <button class="shortcuts-toggle" title="Toggle Shortcuts">
