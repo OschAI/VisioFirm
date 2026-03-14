@@ -24,6 +24,39 @@ export function setupAnnotationInteractions(drawImage, pushToUndoStack, setSelec
         globals.previewPoint = null;
     }
 
+    function syncCurrentFrameAnnotations() {
+        if (globals.currentFrameIndex !== undefined) {
+            globals.annotationMap[globals.currentFrameIndex] = JSON.parse(JSON.stringify(globals.annotations));
+        }
+        globals.annotations.forEach(anno => {
+            if (anno.label && !(anno.label in globals.classToRow)) {
+                globals.classToRow[anno.label] = globals.nextRow++;
+            }
+        });
+        drawTimeline();
+    }
+
+    function closeCurrentPolygon() {
+        if (!globals.currentAnnotation || globals.currentAnnotation.type !== 'polygon') return false;
+        if (globals.currentAnnotation.points.length < 3) return false;
+
+        globals.currentAnnotation.closed = true;
+        globals.annotations.push(globals.currentAnnotation);
+        globals.currentAnnotation = null;
+        globals.previewPoint = null;
+        syncCurrentFrameAnnotations();
+        return true;
+    }
+
+    function isClickNearPolygonStart(canvasX, canvasY) {
+        if (!globals.currentAnnotation || globals.currentAnnotation.type !== 'polygon') return false;
+        if (globals.currentAnnotation.points.length < 3) return false;
+
+        const firstPoint = globals.currentAnnotation.points[0];
+        const firstCanvasPoint = toCanvasCoords(firstPoint.x, firstPoint.y, globals.viewport);
+        return Math.hypot(canvasX - firstCanvasPoint.x, canvasY - firstCanvasPoint.y) < 12;
+    }
+
     function findClosestHandle(canvasX, canvasY, annotations, viewport) {
         let closestDist = Infinity;
         let closestAnn = null;
@@ -111,6 +144,13 @@ export function setupAnnotationInteractions(drawImage, pushToUndoStack, setSelec
 
         // Handle left-click logic: prioritize existing annotation modification in any mode
         if (e.button === 0) {
+            if (globals.mode === 'polygon' && isClickNearPolygonStart(canvasX, canvasY)) {
+                console.log('Closing current polygon from first-point click');
+                closeCurrentPolygon();
+                drawImage();
+                return;
+            }
+
             const closestHandle = findClosestHandle(canvasX, canvasY, globals.annotations, globals.viewport);
             if (closestHandle) {
                 const { ann, index } = closestHandle;
@@ -174,30 +214,6 @@ export function setupAnnotationInteractions(drawImage, pushToUndoStack, setSelec
                 console.log('Added point to polygon (total points now:', globals.currentAnnotation.points.length, '):', { x: imgPoint.x.toFixed(1), y: imgPoint.y.toFixed(1) });
                 globals.lastX = canvasX;
                 globals.lastY = canvasY;
-
-                // Check for closure if at least 3 points
-                if (globals.currentAnnotation.points.length >= 3) {
-                    const firstPoint = globals.currentAnnotation.points[0];
-                    const dist = Math.hypot(imgPoint.x - firstPoint.x, imgPoint.y - firstPoint.y);
-                    console.log('Checking closure: dist to first point =', dist.toFixed(1));
-                    if (dist < 15) {  // Increased threshold for smoother closure
-                        console.log('Closing polygon!');
-                        globals.currentAnnotation.closed = true;
-                        globals.annotations.push(globals.currentAnnotation);
-                        globals.currentAnnotation = null;
-                        globals.previewPoint = null;
-                        // Update map and timeline after completion
-                        if (globals.currentFrameIndex !== undefined) {
-                            globals.annotationMap[globals.currentFrameIndex] = JSON.parse(JSON.stringify(globals.annotations));
-                        }
-                        globals.annotations.forEach(anno => {
-                            if (anno.label && !(anno.label in globals.classToRow)) {
-                                globals.classToRow[anno.label] = globals.nextRow++;
-                            }
-                        });
-                        drawTimeline();
-                    }
-                }
                 globals.previewPoint = null;
             } else {
                 console.log('Unhandled mode in mousedown:', globals.mode);

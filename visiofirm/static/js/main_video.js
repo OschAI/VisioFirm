@@ -991,6 +991,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!globals.undoStack[globals.currentFrameIndex]) globals.undoStack[globals.currentFrameIndex] = [];
         globals.undoStack[globals.currentFrameIndex].push(JSON.parse(JSON.stringify(globals.annotations)));
     }
+    function closeCurrentPolygon() {
+        if (!globals.currentAnnotation || globals.currentAnnotation.type !== 'polygon') return false;
+        if (globals.currentAnnotation.points.length < 3) return false;
+
+        globals.currentAnnotation.closed = true;
+        globals.annotations.push(globals.currentAnnotation);
+        globals.currentAnnotation = null;
+        globals.previewPoint = null;
+        updateMapAndTimeline();
+        drawImage();
+        return true;
+    }
 
     function updateButtonStates() {
         // FIXED: Use correct button refs
@@ -1160,6 +1172,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             ctx.lineWidth = 2;
             const hasPoints = a.points.length > 0;
             let first = null;
+            let last = null;
             if (hasPoints) {
                 first = toCanvasCoords(a.points[0].x, a.points[0].y, globals.viewport);
                 ctx.beginPath();
@@ -1167,31 +1180,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 for (let i = 1; i < a.points.length; i++) {
                     const p = toCanvasCoords(a.points[i].x, a.points[i].y, globals.viewport);
                     ctx.lineTo(p.x, p.y);
+                    last = p;
                 }
-                // Draw fixed points as red circles
-                a.points.forEach(point => {
-                    const p = toCanvasCoords(point.x, point.y, globals.viewport);
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
-                    ctx.fillStyle = 'red';
-                    ctx.fill();
-                });
-                console.log('Current polygon points:', a.points.map(p => `(${p.x.toFixed(1)}, ${p.y.toFixed(1)})`).join(' -> '));
+                if (a.points.length === 1) {
+                    last = first;
+                }
             }
             if (globals.previewPoint && hasPoints) {
-                const lastPoint = a.points[a.points.length - 1];
-                const last = toCanvasCoords(lastPoint.x, lastPoint.y, globals.viewport);
                 const prev = toCanvasCoords(globals.previewPoint.x, globals.previewPoint.y, globals.viewport);
-                ctx.lineTo(prev.x, prev.y);
-                // Preview point circle
-                ctx.beginPath();
-                ctx.arc(prev.x, prev.y, 5, 0, 2 * Math.PI);
-                ctx.fillStyle = 'red';
-                ctx.fill();
+                if (last) {
+                    ctx.lineTo(prev.x, prev.y);
+                }
                 // Check for closing preview
                 const firstImg = a.points[0];
                 const dist = Math.hypot(globals.previewPoint.x - firstImg.x, globals.previewPoint.y - firstImg.y);
-                if (dist < 10 && a.points.length >= 2) {
+                if (dist < 12 && a.points.length >= 3) {
                     ctx.lineTo(first.x, first.y);
                     ctx.closePath();
                     ctx.globalAlpha = 0.7;
@@ -1200,6 +1203,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
             ctx.stroke();
+            a.points.forEach(point => {
+                const p = toCanvasCoords(point.x, point.y, globals.viewport);
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+            });
         }
 
         // Draw selection handles if selected
@@ -2169,6 +2179,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        if (e.key === 'Escape' && globals.currentAnnotation && globals.currentAnnotation.type === 'polygon') {
+            e.preventDefault();
+            closeCurrentPolygon();
+            return;
+        }
+
         // Ctrl+C: copy selected annotation
         if (e.ctrlKey && e.key && e.key.toLowerCase() === 'c' && globals?.selectedAnnotation) {
             e.preventDefault();
@@ -2221,10 +2237,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Left/Right arrow navigation
         if (e.key === 'ArrowLeft') {
             e.preventDefault();
-            if (prevVideoBtn) prevVideoBtn.click();
+            if (prevFrameBtn) prevFrameBtn.click();
         } else if (e.key === 'ArrowRight') {
             e.preventDefault();
-            if (nextVideoBtn) nextVideoBtn.click();
+            if (nextFrameBtn) nextFrameBtn.click();
         }
 
         // G: toggle grid
