@@ -252,6 +252,7 @@ async def annotation(
         project = Project(project_name, "", "", project_path)
         class_list = project.get_classes()
         setup_type = project.get_setup_type()
+        annotation_style_config = project.get_annotation_style_config()
         
         if "Video" in setup_type:
             raw_videos = project.get_videos()  # List of tuples: (video_id, absolute_path, name, duration, fps, frame_count)
@@ -378,6 +379,7 @@ async def annotation(
                             "project_name": project_name,
                             "images": image_data,
                             "classes": class_list,
+                            "annotation_style_config": annotation_style_config,
                             "setup_type": setup_type,
                             "image_annotators": image_annotators,
                             "user": current_user,
@@ -388,6 +390,33 @@ async def annotation(
         logger.error(f"Error in annotation route for {project_name}: {str(e)}")
         print(f"Error loading annotation for {project_name}: {str(e)}")
         raise HTTPException(status_code=500, detail="Project not found or server error")
+
+@router.post('/style_config/{project_name}')
+async def save_style_config(
+    project_name: str,
+    request: Request,
+    current_user: User = Depends(get_current_user_from_cookie)
+):
+    tracker = request.app.tracker
+    tracker.log_step('Saving annotation style config', details={'project_name': project_name})
+    try:
+        project_path = os.path.join(PROJECTS_FOLDER, project_name)
+        if not os.path.exists(project_path):
+            raise ValueError('Project not found')
+
+        payload = await request.json()
+        style_config = payload.get('styleConfig')
+        if not isinstance(style_config, dict):
+            raise ValueError('styleConfig must be a JSON object')
+
+        project = Project(project_name, "", "", project_path)
+        project.set_annotation_style_config(style_config)
+        tracker.log_step('Annotation style config saved successfully', details={'project_name': project_name})
+        return {'success': True}
+    except Exception as e:
+        tracker.log_error(e, step='Save annotation style config')
+        logger.error("Error saving annotation style config for %s: %s", project_name, e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 @router.get('/get_annotations/{project_name}/{image_path:path}')
 async def get_annotations(

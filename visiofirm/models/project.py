@@ -30,6 +30,7 @@ class Project:
                     project_name TEXT PRIMARY KEY,
                     description TEXT,
                     setup_type TEXT NOT NULL,
+                    annotation_style_config TEXT,
                     creation_date DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -119,6 +120,12 @@ class Project:
                 cursor.execute('''
                     ALTER TABLE ReviewedImages ADD COLUMN user_id INTEGER
                 ''')
+            cursor.execute("PRAGMA table_info(Project_Configuration)")
+            config_columns = [col[1] for col in cursor.fetchall()]
+            if 'annotation_style_config' not in config_columns:
+                cursor.execute('''
+                    ALTER TABLE Project_Configuration ADD COLUMN annotation_style_config TEXT
+                ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_images_absolute_path ON Images(absolute_path)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_annotations_image_id ON Annotations(image_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_preannotations_image_id ON Preannotations(image_id)')
@@ -198,6 +205,36 @@ class Project:
             if result:
                 return result[0]
             return None
+
+    def get_annotation_style_config(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT annotation_style_config FROM Project_Configuration WHERE project_name = ?',
+                (self.name,)
+            )
+            result = cursor.fetchone()
+            if not result or not result[0]:
+                return None
+            try:
+                return json.loads(result[0])
+            except json.JSONDecodeError:
+                logger.warning("Invalid annotation style config for project %s", self.name)
+                return None
+
+    def set_annotation_style_config(self, style_config):
+        payload = json.dumps(style_config)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE Project_Configuration
+                SET annotation_style_config = ?
+                WHERE project_name = ?
+                ''',
+                (payload, self.name)
+            )
+            conn.commit()
 
     def add_images(self, absolute_paths):
         print(f"Adding {len(absolute_paths)} images to project '{self.name}'...") 
