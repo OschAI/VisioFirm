@@ -1,4 +1,4 @@
-__version__ = '1.2'
+__version__ = '1.2.1'
 
 from .create_app import create_app
 from .projects import (
