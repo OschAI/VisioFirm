@@ -175,22 +175,22 @@ export async function selectImage(imgElement, index = -1) {
 export function resizeCanvas() {
     if (!currentImage || !currentImageKey) return;
     const container = document.querySelector('.image-container');
+    const imageInfo = container?.querySelector('.image-info');
     if (!container) {
         console.error('Container element not found');
         return;
     }
-    const maxWidth = container.clientWidth * 0.9;
-    const maxHeight = container.clientHeight * 0.9;
-    const aspectRatio = currentImage.width / currentImage.height;
-    if (currentImage.width / currentImage.height > maxWidth / maxHeight) {
-        canvas.width = maxWidth;
-        canvas.height = maxWidth / aspectRatio;
-        viewport.minZoom = 0.9 * maxWidth / currentImage.width;
-    } else {
-        canvas.height = maxHeight;
-        canvas.width = maxHeight * aspectRatio;
-        viewport.minZoom = 0.9 * maxHeight / currentImage.height;
-    }
+    const availableWidth = container.clientWidth;
+    const infoHeight = imageInfo ? imageInfo.offsetHeight : 0;
+    const availableHeight = Math.max(0, container.clientHeight - infoHeight);
+    const widthScale = availableWidth / currentImage.width;
+    const heightScale = availableHeight / currentImage.height;
+    const fitZoom = Math.min(widthScale, heightScale) * 0.9;
+
+    canvas.width = availableWidth;
+    canvas.height = availableHeight;
+    viewport.fitZoom = fitZoom;
+    viewport.minZoom = fitZoom * 0.5;
     viewport.zoom = Math.max(viewport.minZoom, viewport.zoom);
     resetView();
 }

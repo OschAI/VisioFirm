@@ -274,7 +274,7 @@ function drawSelectionHandles(anno) {
 }
 
 export function resetView() {
-    viewport.zoom = viewport.minZoom;
+    viewport.zoom = viewport.fitZoom || viewport.minZoom;
     viewport.x = (canvas.width - currentImage.width * viewport.zoom) / 2;
     viewport.y = (canvas.height - currentImage.height * viewport.zoom) / 2;
     drawImage();
