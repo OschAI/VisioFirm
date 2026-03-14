@@ -9,7 +9,9 @@
 
 -------
 > [!NOTE]
-> VisioFirm v1.2.1 solves some errors for video segmentation and can now support RT-DETR from `ultralytics`.
+> VisioFirm v1.3 enhances the user experience by adding some visual features and solves some errors for video segmentation.
+> You can now configure the colors and annotation style for you images via `Settings`  menu in the grid/list view.
+> v1.3 can now support RT-DETR from `ultralytics`.
 > We corrected some related to YOLOv5 pre-annotation as well as Windows OS related custom path for those using custom models.
 > For Unsual Object beyong COCO dataset, you can now select YOLO World or GroundingDino to pre-label images. 
 > We added tips for the right selection between zero shot and ultralytics models as well as how to load your own model.
