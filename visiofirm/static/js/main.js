@@ -25,6 +25,7 @@ import { setConfidenceThreshold } from '/static/js/globals.js';
 import { initImportModal } from '/static/js/importHandler.js';
 import { showLoadingOverlay, hideLoadingOverlay } from '/static/js/spinnerLoader.js';
 import { initializeSegmentor } from './sam.js';
+import { initAnnotationStyleSettings } from './annotationStyleSettings.js';
 
 function hideLoadingAnimation() {
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -230,6 +231,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const setupType = config.setupType;
     const classes = config.classes;
     generateClassColors(classes);
+    initAnnotationStyleSettings(config);
     generateClassTags();
     initializeGridView();
     hideLoadingAnimation();

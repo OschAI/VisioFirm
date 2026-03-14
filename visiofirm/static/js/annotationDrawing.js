@@ -15,28 +15,33 @@ import {
     isDrawing
 } from './globals.js';
 import { toCanvasCoords } from './annotationCore.js';
+import { getResolvedAnnotationStyle } from './annotationStyles.js';
 
 let hoveredAnnotation = null;
 let dashOffset = 0;
+let neonOffset = 0;
 let lastTimestamp = 0;
 let animationFrameId = null;
+let neonPhase = 0;
 
 export function setHoveredAnnotation(annotation) {
     hoveredAnnotation = annotation;
 }
 
-function animateDashedBorders(timestamp) {
+function animateCanvasEffects(timestamp) {
     if (!lastTimestamp) lastTimestamp = timestamp;
     const delta = timestamp - lastTimestamp;
     dashOffset = (dashOffset + delta * 0.05) % 40;
+    neonOffset += delta * 0.18;
+    neonPhase = (neonPhase + delta * 0.006) % (Math.PI * 2);
     lastTimestamp = timestamp;
     if (!isDrawing) {
         drawImage();
     }
-    animationFrameId = requestAnimationFrame(animateDashedBorders);
+    animationFrameId = requestAnimationFrame(animateCanvasEffects);
 }
 
-requestAnimationFrame(animateDashedBorders);
+requestAnimationFrame(animateCanvasEffects);
 
 if (typeof window !== 'undefined') {
     window.addEventListener('unload', () => {
@@ -107,8 +112,104 @@ function drawAnnotations() {
         });
 }
 
+function hexToRgb(hex) {
+    const safeHex = `${hex}`.trim().slice(0, 7);
+    const normalized = safeHex.startsWith('#') ? safeHex.slice(1) : safeHex;
+    if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+        return { r: 37, g: 99, b: 235 };
+    }
+    return {
+        r: parseInt(normalized.slice(0, 2), 16),
+        g: parseInt(normalized.slice(2, 4), 16),
+        b: parseInt(normalized.slice(4, 6), 16),
+    };
+}
+
+function mixWithWhite(hex, ratio = 0.5) {
+    const { r, g, b } = hexToRgb(hex);
+    const blend = value => Math.round(value + (255 - value) * ratio);
+    return `rgb(${blend(r)}, ${blend(g)}, ${blend(b)})`;
+}
+
+function alphaColor(hex, alpha = 1) {
+    const { r, g, b } = hexToRgb(hex);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function strokeCurrentPath(style, { selected = false, perimeter = 0 } = {}) {
+    const baseWidth = style.strokeWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = baseWidth;
+    ctx.strokeStyle = style.strokeColor;
+    ctx.shadowBlur = 0;
+    ctx.stroke();
+
+    if (!selected) return;
+
+    const glowStrength = 0.55 + 0.45 * Math.sin(neonPhase);
+    const haloColor = alphaColor(style.strokeColor, 0.3 + glowStrength * 0.2);
+    const neonColor = mixWithWhite(style.strokeColor, 0.58 + glowStrength * 0.12);
+    const neonCore = mixWithWhite(style.strokeColor, 0.82);
+
+    ctx.save();
+    ctx.shadowColor = haloColor;
+    ctx.shadowBlur = 10 + glowStrength * 18;
+    ctx.lineWidth = baseWidth + 1.5 + glowStrength * 2;
+    ctx.strokeStyle = alphaColor(style.strokeColor, 0.75);
+    ctx.stroke();
+    ctx.restore();
+
+    if (perimeter <= 0) return;
+
+    const segmentLength = clamp(perimeter * 0.18, 26, 150);
+    const gapLength = Math.max(1, perimeter - segmentLength);
+    const travelOffset = -(neonOffset % perimeter);
+    const oppositeOffset = travelOffset - perimeter / 2;
+
+    [travelOffset, oppositeOffset].forEach(offset => {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.setLineDash([segmentLength, gapLength]);
+        ctx.lineDashOffset = offset;
+        ctx.shadowColor = alphaColor(neonColor, 1);
+        ctx.shadowBlur = 24 + glowStrength * 22;
+        ctx.lineWidth = baseWidth + 4 + glowStrength * 2;
+        ctx.strokeStyle = alphaColor(neonColor, 0.98);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.setLineDash([segmentLength * 0.72, Math.max(1, perimeter - segmentLength * 0.72)]);
+        ctx.lineDashOffset = offset - segmentLength * 0.08;
+        ctx.shadowColor = alphaColor(neonCore, 1);
+        ctx.shadowBlur = 14 + glowStrength * 14;
+        ctx.lineWidth = baseWidth + 2 + glowStrength;
+        ctx.strokeStyle = alphaColor(neonCore, 1);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.setLineDash([segmentLength * 0.34, Math.max(1, perimeter - segmentLength * 0.34)]);
+        ctx.lineDashOffset = offset - segmentLength * 0.12;
+        ctx.shadowColor = 'rgba(255, 255, 255, 1)';
+        ctx.shadowBlur = 10 + glowStrength * 10;
+        ctx.lineWidth = Math.max(1.5, baseWidth * 0.8 + 0.8);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.98)';
+        ctx.stroke();
+        ctx.restore();
+    });
+}
+
 function drawRectAnnotation(anno) {
     ctx.save();
+    const style = getResolvedAnnotationStyle(anno, { selected: anno === selectedAnnotation });
     const centerX = anno.x + anno.width / 2;
     const centerY = anno.y + anno.height / 2;
     const canvasCenter = toCanvasCoords(centerX, centerY);
@@ -116,48 +217,55 @@ function drawRectAnnotation(anno) {
     if (anno.rotation) ctx.rotate(anno.rotation * Math.PI / 180);
     const topLeft = { x: -anno.width * viewport.zoom / 2, y: -anno.height * viewport.zoom / 2 };
     const size = { width: anno.width * viewport.zoom, height: anno.height * viewport.zoom };
+    const perimeter = 2 * (size.width + size.height);
     ctx.beginPath();
     ctx.rect(topLeft.x, topLeft.y, size.width, size.height);
+    ctx.globalAlpha = 1;
+    ctx.setLineDash(style.dash);
     if (anno.isPreannotation) {
-        ctx.globalAlpha = 0.7;
-        ctx.setLineDash([10, 10]);
         ctx.lineDashOffset = dashOffset;
-    } else {
-        ctx.globalAlpha = 0.7;
-        ctx.setLineDash([]);
     }
-    ctx.fillStyle = classColors[anno.label] || '#0000ff33';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'black';
-    ctx.stroke();
+    if (style.renderMode === 'fill' || style.renderMode === 'outline_fill') {
+        ctx.fillStyle = style.fillColor;
+        ctx.fill();
+    }
+    if (style.renderMode === 'outline' || style.renderMode === 'outline_fill') {
+        strokeCurrentPath(style, { selected: anno === selectedAnnotation, perimeter });
+    }
     ctx.restore();
 }
 
 function drawPolygonAnnotation(anno) {
     if (!anno.points || anno.points.length < 1) return;
     ctx.save();
+    const style = getResolvedAnnotationStyle(anno, { selected: anno === selectedAnnotation });
     ctx.beginPath();
     const firstPoint = toCanvasCoords(anno.points[0].x, anno.points[0].y);
     ctx.moveTo(firstPoint.x, firstPoint.y);
+    let perimeter = 0;
+    let previousPoint = firstPoint;
     for (let i = 1; i < anno.points.length; i++) {
         const p = toCanvasCoords(anno.points[i].x, anno.points[i].y);
+        perimeter += Math.hypot(p.x - previousPoint.x, p.y - previousPoint.y);
         ctx.lineTo(p.x, p.y);
+        previousPoint = p;
     }
-    if (anno.closed) ctx.closePath();
+    if (anno.closed) {
+        perimeter += Math.hypot(firstPoint.x - previousPoint.x, firstPoint.y - previousPoint.y);
+        ctx.closePath();
+    }
+    ctx.globalAlpha = 1;
+    ctx.setLineDash(style.dash);
     if (anno.isPreannotation) {
-        ctx.globalAlpha = 0.7;
-        ctx.setLineDash([10, 10]);
         ctx.lineDashOffset = dashOffset;
-    } else {
-        ctx.globalAlpha = 0.7;
-        ctx.setLineDash([]);
     }
-    ctx.fillStyle = classColors[anno.label] || '#fbff0033';
-    if (anno.closed) ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'black';
-    ctx.stroke();
+    if ((style.renderMode === 'fill' || style.renderMode === 'outline_fill') && anno.closed) {
+        ctx.fillStyle = style.fillColor;
+        ctx.fill();
+    }
+    if (style.renderMode === 'outline' || style.renderMode === 'outline_fill' || !anno.closed) {
+        strokeCurrentPath(style, { selected: anno === selectedAnnotation, perimeter });
+    }
     
     // Draw points for in-progress polygon
     if (!anno.closed) {
