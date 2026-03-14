@@ -26,7 +26,8 @@ import {
     setIsRotating,
     selectedClass,
     updateTagHighlights,
-    confidenceThreshold 
+    confidenceThreshold,
+    isAnnotationLabelHidden
 } from './globals.js';
 import { drawImage } from './annotationDrawing.js';
 import { setHoveredAnnotation } from './annotationDrawing.js';
@@ -68,7 +69,10 @@ export function isPointInAnnotation(point, annotation) {
 }
 
 function isAnnotationVisible(anno) {
-    return !anno.isPreannotation || anno.confidence >= confidenceThreshold;
+    return (
+        (!anno.isPreannotation || anno.confidence >= confidenceThreshold) &&
+        !isAnnotationLabelHidden(anno.label)
+    );
 }
 
 export function findSelectedAnnotation(point) {

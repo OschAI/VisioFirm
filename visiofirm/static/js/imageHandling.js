@@ -17,10 +17,42 @@ import {
     setUndoStack,
     setSelectedAnnotation,
     setCurrentImageIndex,
-    updateTagHighlights
+    updateTagHighlights,
+    isAnnotationLabelHidden
 } from './globals.js';
 import { drawImage, resetView } from './annotationDrawing.js';
 import { updateAnnotationStatus, updateClassTags } from './main.js';
+
+export function updateAnnotationSummary() {
+    const summary = document.getElementById('annotation-summary');
+    if (!summary) return;
+
+    const totalPreannotations = annotations.filter(anno => anno.isPreannotation).length;
+    const shownPreannotations = annotations.filter(anno => (
+        anno.isPreannotation &&
+        anno.confidence >= confidenceThreshold &&
+        !isAnnotationLabelHidden(anno.label)
+    )).length;
+    const hiddenByClass = annotations.filter(anno => anno.isPreannotation && isAnnotationLabelHidden(anno.label)).length;
+
+    if (totalPreannotations === 0) {
+        summary.textContent = 'AI: no preannotations';
+        return;
+    }
+
+    const parts = [`AI: ${totalPreannotations} predicted`, `${shownPreannotations} shown`];
+    if (hiddenByClass > 0) {
+        parts.push(`${hiddenByClass} hidden by class`);
+    }
+    summary.textContent = parts.join(' | ');
+}
+
+function isAnnotationCurrentlyVisible(anno) {
+    return (
+        !isAnnotationLabelHidden(anno.label) &&
+        (!anno.isPreannotation || anno.confidence >= confidenceThreshold)
+    );
+}
 
 export async function selectImage(imgElement, index = -1) {
     if (!imgElement || !imgElement.getAttribute('src')) {
@@ -104,7 +136,8 @@ export async function selectImage(imgElement, index = -1) {
             setAnnotations(allAnnotations);
 
             // Select the first annotation to show handles
-            setSelectedAnnotation(allAnnotations.length > 0 ? allAnnotations[0] : null);
+            const firstVisibleAnnotation = allAnnotations.find(isAnnotationCurrentlyVisible) || null;
+            setSelectedAnnotation(firstVisibleAnnotation);
             updateTagHighlights();
         }
         
@@ -127,7 +160,8 @@ export async function selectImage(imgElement, index = -1) {
                 }
             } else {
                 setAnnotations(updatedCachedAnnotations);
-                setSelectedAnnotation(updatedCachedAnnotations.length > 0 ? updatedCachedAnnotations[0] : null);
+                const firstVisibleCachedAnnotation = updatedCachedAnnotations.find(isAnnotationCurrentlyVisible) || null;
+                setSelectedAnnotation(firstVisibleCachedAnnotation);
                 console.log('Using cached annotations:', updatedCachedAnnotations);
             }
         }
@@ -151,8 +185,11 @@ export async function selectImage(imgElement, index = -1) {
             statusElement.dataset.preannotated = isPreannotated ? 'true' : 'false';
         }
 
-        document.querySelector('.image-info').textContent =
-            `${filename} | Resolution: ${currentImage.width}x${currentImage.height}`;
+        const imageInfoText = document.querySelector('.image-info-text');
+        if (imageInfoText) {
+            imageInfoText.textContent = `${filename} | Resolution: ${currentImage.width}x${currentImage.height}`;
+        }
+        updateAnnotationSummary();
         drawImage();
 
         document.querySelectorAll('.thumbnail-row').forEach(row => row.classList.remove('selected'));

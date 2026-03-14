@@ -32,6 +32,7 @@ export let imageEmbeddings = null;
 export let imageProcessed = null;
 export let worker = null;
 export let selectedLabel = null;
+export let hiddenAnnotationLabels = new Set();
 
 export function setSelectedLabel(value) { selectedLabel = value; }
 export function setIsMoving(value) { isMoving = value; }
@@ -64,6 +65,16 @@ export function setSelectedClass(value) { selectedClass = value; }
 export function setPreannotations(value) { preannotations = value; }
 export function setConfidenceThreshold(value) { confidenceThreshold = value; }
 export function setWorker(value) { worker = value; } // Added setter for worker
+export function isAnnotationLabelHidden(label) { return hiddenAnnotationLabels.has(label); }
+export function toggleHiddenAnnotationLabel(label) {
+    if (hiddenAnnotationLabels.has(label)) {
+        hiddenAnnotationLabels.delete(label);
+        return false;
+    }
+    hiddenAnnotationLabels.add(label);
+    return true;
+}
+export function clearHiddenAnnotationLabels() { hiddenAnnotationLabels = new Set(); }
 
 export function initGlobals() {
     const config = JSON.parse(document.getElementById('app-config').textContent);
