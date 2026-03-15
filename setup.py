@@ -44,6 +44,7 @@ setup(
         'passlib[bcrypt]==1.7.4',
         'bcrypt==4.0.1',
         'python-multipart==0.0.20',
+        'transformers==4.41.2',
     ],
     entry_points={
         'console_scripts': [
