@@ -9,12 +9,13 @@
 
 -------
 > [!NOTE]
-> VisioFirm v1.3 enhances the user experience by adding some visual features and solves some errors for video segmentation.
+> VisioFirm v1.3.1 enhances the user experience by adding some visual features and solves some errors for video segmentation.
 > You can now configure the colors and annotation style for you images via `Settings`  menu in the grid/list view.
 > v1.3 can now support RT-DETR from `ultralytics`.
 > We corrected some related to YOLOv5 pre-annotation as well as Windows OS related custom path for those using custom models.
 > For Unsual Object beyong COCO dataset, you can now select YOLO World or GroundingDino to pre-label images. 
 > We added tips for the right selection between zero shot and ultralytics models as well as how to load your own model.
+> If you have issues with ground dino model, downgrade `transformers` to 4.41.2
 
 > [!IMPORTANT]
 > VisioFirm v1 is now available. VisioFirm has now much more support for computer vision annotation, pushing further the boundaries of efficient, fast, and accurate annotation. Here's  what’s New in v1 ✨
