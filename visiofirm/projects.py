@@ -212,6 +212,19 @@ class VFProjects:
     """Main API class for managing VisioFirm projects."""
 
     @classmethod
+    def _missing_project_error(cls, name, projects_folder=PROJECTS_FOLDER) -> ValueError:
+        available = [p["name"] for p in cls.list(projects_folder=projects_folder)]
+        if available:
+            available_msg = ", ".join(available)
+        else:
+            available_msg = "no projects found"
+        return ValueError(
+            f"Project '{name}' not found. "
+            f"Use `VFProjects.list()` to inspect available projects. "
+            f"Currently available: {available_msg}"
+        )
+
+    @classmethod
     def list(cls, projects_folder=PROJECTS_FOLDER):
         """List all existing projects.
         
@@ -307,7 +320,7 @@ class VFProjects:
         return project
 
     @classmethod
-    def get_project(cls, name, projects_folder=PROJECTS_FOLDER):
+    def get_project(cls, name, projects_folder=PROJECTS_FOLDER, strict=False):
         """Retrieve an existing Project by name.
         
         Returns:
@@ -316,7 +329,14 @@ class VFProjects:
         project_path = os.path.join(projects_folder, secure_filename(name))
         if os.path.exists(project_path):
             return Project(name, '', '', project_path)
+        if strict:
+            raise cls._missing_project_error(name, projects_folder=projects_folder)
         return None
+
+    @classmethod
+    def require_project(cls, name, projects_folder=PROJECTS_FOLDER):
+        """Retrieve an existing Project by name or raise a helpful error."""
+        return cls.get_project(name, projects_folder=projects_folder, strict=True)
 
     @classmethod
     def get_project_overview(cls, name, projects_folder=PROJECTS_FOLDER):
