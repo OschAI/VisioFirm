@@ -70,6 +70,7 @@ class VFImagePlot:
             cursor = conn.cursor()
             if self.image_id:
                 cursor.execute('SELECT absolute_path, width, height FROM Images WHERE image_id = ?', (self.image_id,))
+                result = cursor.fetchone()
             else:
                 base = os.path.splitext(self.image_name)[0] if self.image_name else ''
                 cursor.execute('SELECT image_id, absolute_path, width, height FROM Images WHERE absolute_path LIKE ?', (f'%{base}%',))
@@ -85,7 +86,12 @@ class VFImagePlot:
         if not os.path.exists(self.abs_path):
             raise ValueError(f"Image file missing: {self.abs_path}")
 
-        self.annotations = self.project.get_annotations(self.abs_path)
+        result = self.project.get_annotations(self.abs_path)
+        if not isinstance(result, dict):
+            raise ValueError("Unexpected annotation payload returned by project.get_annotations()")
+
+        self.annotations = result.get("annotations", [])
+        self.preannotations = result.get("preannotations", [])
         if self.project.get_setup_type() == "Segmentation":
             # Load seg as polygons
             for anno in self.annotations:
@@ -93,7 +99,12 @@ class VFImagePlot:
                     seg = json.loads(anno['segmentation']) if isinstance(anno['segmentation'], str) else anno['segmentation']
                     anno['polygon'] = seg
 
-        logger.info(f"Loaded {len(self.annotations)} annotations for {self.abs_path}")
+        logger.info(
+            "Loaded %s annotations and %s preannotations for %s",
+            len(self.annotations),
+            len(self.preannotations),
+            self.abs_path
+        )
 
     def plot(self):
         """Plot image with annotations (bbox/polygons). Returns matplotlib Figure."""
