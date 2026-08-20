@@ -156,6 +156,17 @@ visiofirm
 
 The VisioFirm app uses cache directories to store settings locally.
 
+### User administration CLI
+
+A small command-line tool for managing local users:
+
+```bash
+visiofirm users                            # list all users
+visiofirm <username|email> set-pswd <pw>   # reset a user's password
+```
+
+Passwords are stored as bcrypt hashes, so they cannot be recovered in plaintext — `set-pswd` is the way to restore access.
+
 ## Usage
 
 ### Pre-Annotation with AI

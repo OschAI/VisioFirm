@@ -48,7 +48,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'visiofirm = run:main',
+            'visiofirm = visiofirm.cli:main',
         ]
     },
     classifiers=[
